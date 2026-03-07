@@ -622,23 +622,35 @@ async function uploadToGist() {
         let dataToUpload = buildPayload(appMeta.deviceName);
 
         if (gistId) {
-            const remoteData = await fetchRemoteData();
-            const localChangedSinceSync = appMeta.lastSyncedAt ? new Date(appMeta.lastModified).getTime() > new Date(appMeta.lastSyncedAt).getTime() : true;
-            const remoteChangedSinceSync = appMeta.lastSyncedAt ? new Date(remoteData.appMeta?.lastModified || remoteData.lastModified || 0).getTime() > new Date(appMeta.lastSyncedAt).getTime() : true;
-            const different = datasetFingerprint(remoteData) !== datasetFingerprint({ students, transactions, classes, appMeta });
-            if (different && localChangedSinceSync && remoteChangedSinceSync) {
-                const shouldMerge = confirm('Conflict detected: both this device and the cloud were updated. Press OK to merge automatically, or Cancel to keep your local copy and upload it.');
-                if (shouldMerge) {
-                    dataToUpload = mergeDataSets({ students, transactions, classes, securityKey, appMeta }, remoteData);
-                    students = dataToUpload.students;
-                    transactions = dataToUpload.transactions;
-                    classes = dataToUpload.classes;
-                    securityKey = dataToUpload.securityKey;
-                    appMeta = Object.assign(appMeta, dataToUpload.appMeta);
-                    saveData();
-                    logSync('🧩 Conflict merged before upload');
+            let remoteData = null;
+            try {
+                remoteData = await fetchRemoteData();
+            } catch (err) {
+                if ((err && err.message || '').includes('Data file not found in Gist')) {
+                    logSync('ℹ️ Existing Gist found, but no app data file exists yet. Creating it now...');
                 } else {
-                    logSync('⬆️ Keeping local version for upload');
+                    throw err;
+                }
+            }
+
+            if (remoteData) {
+                const localChangedSinceSync = appMeta.lastSyncedAt ? new Date(appMeta.lastModified).getTime() > new Date(appMeta.lastSyncedAt).getTime() : true;
+                const remoteChangedSinceSync = appMeta.lastSyncedAt ? new Date(remoteData.appMeta?.lastModified || remoteData.lastModified || 0).getTime() > new Date(appMeta.lastSyncedAt).getTime() : true;
+                const different = datasetFingerprint(remoteData) !== datasetFingerprint({ students, transactions, classes, appMeta });
+                if (different && localChangedSinceSync && remoteChangedSinceSync) {
+                    const shouldMerge = confirm('Conflict detected: both this device and the cloud were updated. Press OK to merge automatically, or Cancel to keep your local copy and upload it.');
+                    if (shouldMerge) {
+                        dataToUpload = mergeDataSets({ students, transactions, classes, securityKey, appMeta }, remoteData);
+                        students = dataToUpload.students;
+                        transactions = dataToUpload.transactions;
+                        classes = dataToUpload.classes;
+                        securityKey = dataToUpload.securityKey;
+                        appMeta = Object.assign(appMeta, dataToUpload.appMeta);
+                        saveData();
+                        logSync('🧩 Conflict merged before upload');
+                    } else {
+                        logSync('⬆️ Keeping local version for upload');
+                    }
                 }
             }
         }
