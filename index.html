@@ -66,6 +66,13 @@
         .security-info { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 12px; border-radius: 8px; margin: 10px 0; font-size: 14px; }
         .fraud-warning { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 12px; border-radius: 8px; margin: 10px 0; font-size: 14px; display: none; }
         .fraud-warning.active { display: block; }
+        .balance-row, .leaderboard-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border:1px solid #eee; border-radius:12px; margin-bottom:10px; background:#fff; }
+        .balance-row .name-wrap, .leaderboard-row .name-wrap { display:flex; align-items:center; gap:12px; min-width:0; }
+        .rank-badge { width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; background:#f3f4f6; color:#333; }
+        .medal-1 { background:#ffe082; }
+        .medal-2 { background:#e5e7eb; }
+        .medal-3 { background:#f4c7a1; }
+        .muted-text { color:#777; font-size:12px; }
         @media (max-width: 768px) { .container { padding: 10px; } .card { padding: 16px; } .grid-2 { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -80,6 +87,8 @@
             <button class="nav-tab" onclick="showScreen('batch', this)">⚡ Batch</button>
             <button class="nav-tab" onclick="showScreen('quick', this)">💳 Quick</button>
             <button class="nav-tab" onclick="showScreen('students', this)">👥 Students</button>
+            <button class="nav-tab" onclick="showScreen('balances', this)">💰 Balances</button>
+            <button class="nav-tab" onclick="showScreen('leaderboard', this)">🏆 Leaderboard</button>
             <button class="nav-tab" onclick="showScreen('classes', this)">🏫 Classes</button>
             <button class="nav-tab" onclick="showScreen('security', this)">🔒 Security</button>
             <button class="nav-tab" onclick="showScreen('history', this)">📜 History</button>
@@ -101,6 +110,8 @@
                 <button class="btn btn-success" onclick="showScreen('batch'); setBatchMode('reward')">🎁 Batch Reward</button>
                 <button class="btn btn-danger" onclick="showScreen('batch'); setBatchMode('deduction')">➖ Batch Deduction</button>
                 <button class="btn" onclick="showScreen('quick', this)">💳 Quick Transaction</button>
+                <button class="btn btn-secondary" onclick="showScreen('balances')">💰 Class Balances</button>
+                <button class="btn btn-warning" onclick="showScreen('leaderboard')">🏆 Leaderboard</button>
             </div>
             <div class="security-info">
                 <strong>🔒 Security Active:</strong> All QR codes are cryptographically signed.
@@ -229,6 +240,48 @@
             <div id="student-detail" class="card" style="display: none;">
                 <div class="card-title">📋 Student Profile</div>
                 <div id="detail-content"></div>
+            </div>
+        </div>
+        <div id="balances" class="screen">
+            <div class="card">
+                <div class="card-title">💰 Class Balances</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Class</label>
+                        <select id="balances-class" onchange="loadBalancesView()"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Search</label>
+                        <input type="text" id="balances-search" placeholder="Search student" oninput="loadBalancesView()">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <button class="btn btn-secondary" onclick="sortBalances('name')">Sort by Name</button>
+                    <button class="btn btn-secondary" onclick="sortBalances('balance')">Sort by Balance</button>
+                </div>
+                <div id="balances-list" style="margin-top: 20px;"></div>
+            </div>
+        </div>
+        <div id="leaderboard" class="screen">
+            <div class="card">
+                <div class="card-title">🏆 Leaderboard</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Class</label>
+                        <select id="leaderboard-class" onchange="loadLeaderboardView()">
+                            <option value="all">All Classes</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Show</label>
+                        <select id="leaderboard-limit" onchange="loadLeaderboardView()">
+                            <option value="10">Top 10</option>
+                            <option value="20">Top 20</option>
+                            <option value="999">All Students</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="leaderboard-list" style="margin-top: 20px;"></div>
             </div>
         </div>
         <div id="classes" class="screen">
@@ -384,8 +437,26 @@
         function loadClasses() { let opts = '<option value="">Select Class</option>' + classes.map(c => `<option value="${c}">${c}</option>`).join(''); document.getElementById('batch-class').innerHTML = opts; document.getElementById('new-student-class').innerHTML = opts; let list = document.getElementById('classes-list'); list.innerHTML = classes.length ? classes.map(c => `<div class="class-tag">${c}<button onclick="deleteClass('${c}')">×</button></div>`).join('') : '<p style="color:#999">No classes yet.</p>'; }
         function addClass() { let n = document.getElementById('new-class-name').value.trim(); if (!n) return alert('Enter class name'); if (classes.includes(n)) return alert('Class exists'); classes.push(n); touchData(); saveData(); loadClasses(); document.getElementById('new-class-name').value = ''; alert('Class added!'); }
         function deleteClass(n) { if (confirm('Delete "' + n + '"?')) { classes = classes.filter(c => c !== n); touchData(); saveData(); loadClasses(); } }
-        function showScreen(id, el = null) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active')); if (el) el.classList.add('active'); if (id === 'dashboard') loadDashboard(); if (id === 'students') loadStudentList(); if (id === 'history') loadHistory(); if (id === 'classes') loadClasses(); if (id === 'security') document.getElementById('current-key').textContent = securityKey.substring(0, 8) + '...' + securityKey.substring(securityKey.length - 8); if (id === 'sync') updateSyncStatus(); }
+        function showScreen(id, el = null) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            if (el) el.classList.add('active');
+            if (id === 'dashboard') loadDashboard();
+            if (id === 'students') loadStudentList();
+            if (id === 'balances') loadBalancesView();
+            if (id === 'leaderboard') loadLeaderboardView();
+            if (id === 'history') loadHistory();
+            if (id === 'classes') loadClasses();
+            if (id === 'security') document.getElementById('current-key').textContent = securityKey.substring(0, 8) + '...' + securityKey.substring(securityKey.length - 8);
+            if (id === 'sync') updateSyncStatus();
+        }
         function loadDashboard() { document.getElementById('total-students').textContent = students.length; let today = new Date().toDateString(); document.getElementById('today-transactions').textContent = transactions.filter(t => new Date(t.date).toDateString() === today).length; }
+        let balancesSortMode = 'name';
+        function populateClassDropdown(selectId, includeAll = false) { const sel = document.getElementById(selectId); if (!sel) return; const current = sel.value; let options = includeAll ? ['<option value="all">All Classes</option>'] : []; options = options.concat(classes.map(c => `<option value="${c}">${c}</option>`)); sel.innerHTML = options.join(''); if (current && [...sel.options].some(o => o.value === current)) sel.value = current; else if (!includeAll && classes.length) sel.value = classes[0]; }
+        function sortBalances(mode) { balancesSortMode = mode; loadBalancesView(); }
+        function loadBalancesView() { populateClassDropdown('balances-class'); const className = document.getElementById('balances-class')?.value || classes[0] || ''; const search = (document.getElementById('balances-search')?.value || '').toLowerCase().trim(); let filtered = students.filter(s => (!className || s.class === className) && (!search || s.name.toLowerCase().includes(search) || s.id.toLowerCase().includes(search))); filtered.sort((a,b) => balancesSortMode === 'balance' ? (b.balance - a.balance) || a.name.localeCompare(b.name) : a.name.localeCompare(b.name)); const el = document.getElementById('balances-list'); if (!el) return; if (!filtered.length) { el.innerHTML = '<div class="empty-state">No students found for this class.</div>'; return; } el.innerHTML = filtered.map(s => `<div class="balance-row"><div class="name-wrap"><div class="student-avatar">${s.name.charAt(0)}</div><div><div style="font-weight:700">${s.name}</div><div class="muted-text">${s.id} • ${s.class}</div></div></div><div class="balance-badge">${s.balance}</div></div>`).join(''); }
+        function loadLeaderboardView() { populateClassDropdown('leaderboard-class', true); const className = document.getElementById('leaderboard-class')?.value || 'all'; const limit = parseInt(document.getElementById('leaderboard-limit')?.value || '10', 10); let ranked = students.filter(s => className === 'all' || s.class === className).slice().sort((a,b) => (b.balance - a.balance) || a.name.localeCompare(b.name)); if (limit < 999) ranked = ranked.slice(0, limit); const el = document.getElementById('leaderboard-list'); if (!el) return; if (!ranked.length) { el.innerHTML = '<div class="empty-state">No students available yet.</div>'; return; } el.innerHTML = ranked.map((s, i) => { const medal = i===0 ? 'medal-1' : i===1 ? 'medal-2' : i===2 ? 'medal-3' : ''; return `<div class="leaderboard-row"><div class="name-wrap"><div class="rank-badge ${medal}">${i+1}</div><div><div style="font-weight:700">${s.name}</div><div class="muted-text">${s.class}</div></div></div><div class="balance-badge">${s.balance}</div></div>`; }).join(''); }
         function changeSecurityKey() { let k = document.getElementById('new-security-key').value.trim(); if (k.length < 8) return alert('Min 8 chars'); if (confirm('Change key? Old cards become invalid!')) { securityKey = k; touchData(); saveData(); alert('Key changed!'); showScreen('security'); } }
         function resetAllData() { if (confirm('⚠️ Delete ALL data?') && confirm('Are you sure?')) { students = []; transactions = []; classes = ['Year 7 GP', 'Year 8 GP', 'Year 9 GP']; touchData(); securityKey = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15); saveData(); alert('Reset complete'); loadDashboard(); } }
         function setBatchMode(m) { document.getElementById('batch-mode').value = m; updatePresets(); }
@@ -428,10 +499,10 @@
         function stopLookupScan() { stopScanning(); document.getElementById('lookup-scanner').style.display = 'none'; }
         function showStudentDetail(id) { let s = students.find(x => x.id === id); if (!s) return alert('Not found'); let t = transactions.filter(x => x.studentId === id).reverse().slice(0, 5), sec = secureQR(id); document.getElementById('student-detail').style.display = 'block'; document.getElementById('detail-content').innerHTML = `<div class="student-card"><div class="student-avatar">${s.name.charAt(0)}</div><div><h4>${s.name}</h4><p>${s.id} • ${s.class}</p></div><div class="balance-badge">${s.balance}</div></div><div class="qr-card"><div class="qr-card-header">Official Card</div><div class="qr-card-subtitle">${s.class}</div><div class="qr-display-area"><div id="qrcode-${s.id}" class="qr-code-container"></div><div class="security-hash">Hash: ${sec.split('|')[1]}</div></div></div><button class="btn btn-success" onclick="printCard('${s.id}')">🖨️ Print</button><button class="btn btn-danger" onclick="deleteStudent('${s.id}')">🗑️ Delete</button><h4 style="margin-top:20px">Transactions:</h4>` + (t.map(x => `<div class="transaction-item"><span>${x.reason}</span><span class="${x.amount > 0 ? 'positive' : 'negative'}">${x.amount > 0 ? '+' : ''}${x.amount}</span></div>`).join('') || '<p style="color:#999">None</p>'); setTimeout(() => new QRCode(document.getElementById('qrcode-' + s.id), { text: sec, width: 200, height: 200, colorDark: "#000", colorLight: "#fff", correctLevel: QRCode.CorrectLevel.H }), 100); document.getElementById('student-detail').scrollIntoView({ behavior: 'smooth' }); }
         function printCard(id) { let s = students.find(x => x.id === id), sec = secureQR(id), w = window.open('', '_blank'), html = '<html><head><title>' + s.name + '</title><style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f0f0f0}.card{background:white;border:3px solid #333;border-radius:15px;padding:30px;width:350px;text-align:center;position:relative}.header{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:15px;margin:-30px -30px 20px -30px;border-radius:12px 12px 0 0;font-weight:bold;font-size:18px}.name{font-size:24px;font-weight:bold;margin:20px 0 5px}.class{color:#666;margin-bottom:20px}.qr{margin:20px 0}.hash{font-family:monospace;font-size:10px;color:#999;margin-top:10px}.footer{font-size:12px;color:#999;margin-top:20px;border-top:1px solid #eee;padding-top:10px}.seal{position:absolute;top:10px;right:10px;background:#e74c3c;color:white;padding:5px 10px;border-radius:5px;font-size:10px;font-weight:bold;transform:rotate(15deg)}</style></head><body><div class="card"><div class="seal">OFFICIAL</div><div class="header">CLASSROOM ECONOMY</div><div class="name">' + s.name + '</div><div class="class">' + s.class + ' • ID: ' + s.id + '</div><div class="qr"><img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(sec) + '"></div><div class="hash">Secure: ' + sec.split('|')[1] + '</div><div class="footer">Cryptographically secured card</div></div></body></html>'; w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500); }
-        function deleteStudent(id) { if (confirm('Delete student?')) { students = students.filter(s => s.id !== id); touchData(); saveData(); document.getElementById('student-detail').style.display = 'none'; loadStudentList(); loadDashboard(); alert('Deleted'); } }
+        function deleteStudent(id) { if (confirm('Delete student?')) { students = students.filter(s => s.id !== id); touchData(); saveData(); document.getElementById('student-detail').style.display = 'none'; loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); alert('Deleted'); } }
         function showAddStudentModal() { document.getElementById('add-student-modal').classList.add('active'); loadClasses(); }
         function closeModal() { document.getElementById('add-student-modal').classList.remove('active'); }
-        function addStudent() { let n = document.getElementById('new-student-name').value.trim(), id = document.getElementById('new-student-id').value.trim(), c = document.getElementById('new-student-class').value, b = parseInt(document.getElementById('new-student-balance').value) || 0; if (!n || !id || !c) return alert('Fill all fields'); if (students.find(s => s.id === id)) return alert('ID exists'); students.push({ id: id, name: n, class: c, balance: b }); touchData(); saveData(); closeModal(); loadStudentList(); loadDashboard(); document.getElementById('new-student-name').value = ''; document.getElementById('new-student-id').value = ''; document.getElementById('new-student-balance').value = '0'; alert('Student added!'); }
+        function addStudent() { let n = document.getElementById('new-student-name').value.trim(), id = document.getElementById('new-student-id').value.trim(), c = document.getElementById('new-student-class').value, b = parseInt(document.getElementById('new-student-balance').value) || 0; if (!n || !id || !c) return alert('Fill all fields'); if (students.find(s => s.id === id)) return alert('ID exists'); students.push({ id: id, name: n, class: c, balance: b }); touchData(); saveData(); closeModal(); loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); document.getElementById('new-student-name').value = ''; document.getElementById('new-student-id').value = ''; document.getElementById('new-student-balance').value = '0'; alert('Student added!'); }
         function loadHistory() { let list = document.getElementById('history-list'); list.innerHTML = transactions.length ? transactions.slice().reverse().map(t => '<div class="transaction-item"><div><h4>' + t.studentName + ' <span style="font-weight:normal;color:#999">(' + t.className + ')</span></h4><p style="font-size:13px;color:#666">' + t.reason + ' • ' + new Date(t.date).toLocaleString() + '</p></div><span class="' + (t.amount > 0 ? 'positive' : 'negative') + '" style="font-size:20px;font-weight:700">' + (t.amount > 0 ? '+' : '') + t.amount + '</span></div>').join('') : '<div class="empty-state">No transactions</div>'; }
         
         function fmtDate(dateStr) { return dateStr ? new Date(dateStr).toLocaleString() : 'Never'; }
