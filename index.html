@@ -430,6 +430,18 @@
             appMeta.lastModified = new Date().toISOString();
             appMeta.lastUpdatedBy = sourceLabel;
         }
+        function recalculateBalancesFromTransactions() {
+            const transactionTotals = new Map();
+            transactions.forEach(t => {
+                if (!t || !t.studentId) return;
+                const amount = Number(t.amount) || 0;
+                transactionTotals.set(t.studentId, (transactionTotals.get(t.studentId) || 0) + amount);
+            });
+            students = students.map(s => ({
+                ...s,
+                balance: transactionTotals.get(s.id) || 0
+            }));
+        }
         function saveData() {
             try {
                 localStorage.setItem('students', JSON.stringify(students));
@@ -439,6 +451,7 @@
                 localStorage.setItem('appMeta', JSON.stringify(appMeta));
             } catch (e) {}
         }
+        recalculateBalancesFromTransactions();
         saveData();
         function generateSignature(id) { let s = 0, d = id + securityKey; for (let i = 0; i < d.length; i++) { s = ((s << 5) - s) + d.charCodeAt(i); s = s & s; } return Math.abs(s).toString(16).toUpperCase().padStart(8, '0'); }
         function verifyQR(qr) { try { let p = qr.split('|'); if (p.length !== 2) return { valid: false }; return { valid: generateSignature(p[0]) === p[1], studentId: p[0] }; } catch (e) { return { valid: false }; } }
@@ -475,18 +488,15 @@
   html5QrCode = new Html5Qrcode(el); 
   Html5Qrcode.getCameras().then(cameras => {
     if (cameras && cameras.length) {
-      // Try to find back camera
       let backCamera = cameras.find(c => c.label.toLowerCase().includes('back') || c.label.toLowerCase().includes('environment') || c.label.toLowerCase().includes('rear'));
       let cameraId = backCamera ? backCamera.id : cameras[0].id;
       html5QrCode.start(cameraId, { fps: 10, qrbox: { width: 250, height: 250 } }, cb, () => {})
         .catch(err => alert('Camera error: ' + err));
     } else {
-      // Fallback to facingMode if no cameras found via getCameras
       html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, cb, () => {})
         .catch(err => alert('Camera error: ' + err));
     }
   }).catch(err => {
-    // Fallback if getCameras fails
     html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, cb, () => {})
       .catch(err => alert('Camera error: ' + err));
   });
@@ -515,10 +525,10 @@
         function quickAdjustStudent(id, amount, reason) { const s = students.find(x => x.id === id); if (!s) return alert('Student not found'); s.balance += amount; touchData(); transactions.push({ id: Date.now(), studentId: s.id, studentName: s.name, className: s.class, amount: amount, reason: reason, date: new Date().toISOString() }); saveData(); refreshStudentViews(id); }
         function manualAdjustStudent(id, mode) { const amountInput = document.getElementById('detail-amount-' + id); const reasonInput = document.getElementById('detail-reason-' + id); let amount = parseInt(amountInput.value, 10); const reason = (reasonInput.value || '').trim(); if (!amount || amount < 0) return alert('Enter a valid positive amount'); if (!reason) return alert('Enter a reason'); if (mode === 'deduct') amount = -amount; quickAdjustStudent(id, amount, reason); amountInput.value=''; reasonInput.value=''; }
         function printCard(id) { let s = students.find(x => x.id === id), sec = secureQR(id), w = window.open('', '_blank'), html = '<html><head><title>' + s.name + '</title><style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f0f0f0}.card{background:white;border:3px solid #333;border-radius:15px;padding:30px;width:350px;text-align:center;position:relative}.header{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:15px;margin:-30px -30px 20px -30px;border-radius:12px 12px 0 0;font-weight:bold;font-size:18px}.name{font-size:24px;font-weight:bold;margin:20px 0 5px}.class{color:#666;margin-bottom:20px}.qr{margin:20px 0}.hash{font-family:monospace;font-size:10px;color:#999;margin-top:10px}.footer{font-size:12px;color:#999;margin-top:20px;border-top:1px solid #eee;padding-top:10px}.seal{position:absolute;top:10px;right:10px;background:#e74c3c;color:white;padding:5px 10px;border-radius:5px;font-size:10px;font-weight:bold;transform:rotate(15deg)}</style></head><body><div class="card"><div class="seal">OFFICIAL</div><div class="header">CLASSROOM ECONOMY</div><div class="name">' + s.name + '</div><div class="class">' + s.class + ' • ID: ' + s.id + '</div><div class="qr"><img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(sec) + '"></div><div class="hash">Secure: ' + sec.split('|')[1] + '</div><div class="footer">Cryptographically secured card</div></div></body></html>'; w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500); }
-        function deleteStudent(id) { if (confirm('Delete student?')) { students = students.filter(s => s.id !== id); touchData(); saveData(); document.getElementById('student-detail').style.display = 'none'; loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); alert('Deleted'); } }
+        function deleteStudent(id) { if (confirm('Delete student?')) { students = students.filter(s => s.id !== id); transactions = transactions.filter(t => t.studentId !== id); recalculateBalancesFromTransactions(); touchData(); saveData(); document.getElementById('student-detail').style.display = 'none'; loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); alert('Deleted'); } }
         function showAddStudentModal() { document.getElementById('add-student-modal').classList.add('active'); loadClasses(); }
         function closeModal() { document.getElementById('add-student-modal').classList.remove('active'); }
-        function addStudent() { let n = document.getElementById('new-student-name').value.trim(), id = document.getElementById('new-student-id').value.trim(), c = document.getElementById('new-student-class').value, b = parseInt(document.getElementById('new-student-balance').value) || 0; if (!n || !id || !c) return alert('Fill all fields'); if (students.find(s => s.id === id)) return alert('ID exists'); students.push({ id: id, name: n, class: c, balance: b }); touchData(); saveData(); closeModal(); loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); document.getElementById('new-student-name').value = ''; document.getElementById('new-student-id').value = ''; document.getElementById('new-student-balance').value = '0'; alert('Student added!'); }
+        function addStudent() { let n = document.getElementById('new-student-name').value.trim(), id = document.getElementById('new-student-id').value.trim(), c = document.getElementById('new-student-class').value, b = parseInt(document.getElementById('new-student-balance').value) || 0; if (!n || !id || !c) return alert('Fill all fields'); if (students.find(s => s.id === id)) return alert('ID exists'); students.push({ id: id, name: n, class: c, balance: b }); if (b !== 0) { transactions.push({ id: Date.now(), studentId: id, studentName: n, className: c, amount: b, reason: 'Starting balance', date: new Date().toISOString() }); } recalculateBalancesFromTransactions(); touchData(); saveData(); closeModal(); loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); document.getElementById('new-student-name').value = ''; document.getElementById('new-student-id').value = ''; document.getElementById('new-student-balance').value = '0'; alert('Student added!'); }
         function loadHistory() { let list = document.getElementById('history-list'); list.innerHTML = transactions.length ? transactions.slice().reverse().map(t => '<div class="transaction-item"><div><h4>' + t.studentName + ' <span style="font-weight:normal;color:#999">(' + t.className + ')</span></h4><p style="font-size:13px;color:#666">' + t.reason + ' • ' + new Date(t.date).toLocaleString() + '</p></div><span class="' + (t.amount > 0 ? 'positive' : 'negative') + '" style="font-size:20px;font-weight:700">' + (t.amount > 0 ? '+' : '') + t.amount + '</span></div>').join('') : '<div class="empty-state">No transactions</div>'; }
         
         function fmtDate(dateStr) { return dateStr ? new Date(dateStr).toLocaleString() : 'Never'; }
@@ -552,7 +562,7 @@
             const classSet = new Set([...(localData.classes || []), ...(remoteData.classes || [])]);
             const txMap = new Map();
             [...(localData.transactions || []), ...(remoteData.transactions || [])].forEach(t => txMap.set(txKey(t), t));
-            return {
+            const merged = {
                 students: Array.from(studentsMap.values()),
                 transactions: Array.from(txMap.values()).sort((a,b) => new Date(a.date||0) - new Date(b.date||0)),
                 classes: Array.from(classSet.values()),
@@ -565,12 +575,21 @@
                     lastSyncSource: 'Merged local + cloud'
                 }
             };
+            const totals = new Map();
+            merged.transactions.forEach(t => {
+                if (!t || !t.studentId) return;
+                const amount = Number(t.amount) || 0;
+                totals.set(t.studentId, (totals.get(t.studentId) || 0) + amount);
+            });
+            merged.students = merged.students.map(s => ({ ...s, balance: totals.get(s.id) || 0 }));
+            return merged;
         }
         function applyImportedData(data, sourceLabel) {
             if (data.students) students = data.students;
             if (data.transactions) transactions = data.transactions;
             if (data.classes) classes = data.classes;
             if (data.securityKey) securityKey = data.securityKey;
+            recalculateBalancesFromTransactions();
             appMeta = Object.assign(appMeta, data.appMeta || {}, {
                 lastSyncSource: sourceLabel || 'Imported',
                 lastSyncedAt: new Date().toISOString()
@@ -580,6 +599,8 @@
             loadStudentList();
             loadClasses();
             loadHistory();
+            loadBalancesView();
+            loadLeaderboardView();
             updateLocalMetaUI();
         }
         function exportBackup() {
@@ -620,7 +641,6 @@
             reader.readAsText(file);
         }
 
-// GitHub Sync Functions
 let githubToken = localStorage.getItem('githubToken') || '';
 let gistId = localStorage.getItem('gistId') || '';
 
@@ -837,12 +857,14 @@ function logSync(msg) {
     log.insertBefore(div, log.firstChild);
 }
 
-// Load sync settings on startup
 document.addEventListener('DOMContentLoaded', () => { 
     loadClasses(); 
     loadDashboard(); 
     updatePresets();
     updateSyncStatus();
+    loadBalancesView();
+    loadLeaderboardView();
+    loadStudentList();
     document.getElementById('backup-file').addEventListener('change', importBackupFromFile);
     document.getElementById('student-detail-modal').addEventListener('click', function(e){ if (e.target === this) closeStudentDetailModal(); });
 });
