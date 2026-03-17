@@ -754,52 +754,119 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         }
         function showAddStudentModal() { document.getElementById('add-student-modal').classList.add('active'); loadClasses(); }
         function closeModal() { document.getElementById('add-student-modal').classList.remove('active'); }
-        async function addStudent() {
-    let n = document.getElementById('new-student-name').value.trim();
-    let id = document.getElementById('new-student-id').value.trim();
-    let c = document.getElementById('new-student-class').value;
-    let b = parseInt(document.getElementById('new-student-balance').value) || 0;
-
-    if (!n || !id || !c) return alert('Fill all fields');
-    if (students.find(s => s.id === id)) return alert('ID exists');
-
-    const { error: studentError } = await supabaseClient
-        .from('students')
-        .insert([{
-            id: id,
-            name: n,
-            class_name: c
-        }]);
-
-    if (studentError) {
-        alert(studentError.message);
-        return;
-    }
-
-    if (b !== 0) {
-        const { error: txError } = await supabaseClient
-            .from('transactions')
-            .insert([{
-                student_id: id,
-                amount: b,
-                reason: 'Starting balance'
-            }]);
-
-        if (txError) {
-            alert(txError.message);
-            return;
+        function formatSupabaseError(error) {
+            if (!error) return 'Unknown error';
+            return [error.message, error.details, error.hint, error.code].filter(Boolean).join(' | ');
         }
-    }
+        function logSupabaseError(context, error) {
+            console.error(context, error);
+            alert(context + ': ' + formatSupabaseError(error));
+        }
+        async function addStudent() {
+            const saveBtn = document.querySelector('#add-student-modal .btn.btn-success');
+            const originalBtnText = saveBtn ? saveBtn.textContent : '';
 
-    await loadFromSupabase();
+            try {
+                let n = document.getElementById('new-student-name').value.trim();
+                let id = document.getElementById('new-student-id').value.trim();
+                let c = document.getElementById('new-student-class').value;
+                let b = parseInt(document.getElementById('new-student-balance').value, 10) || 0;
 
-    closeModal();
-    document.getElementById('new-student-name').value = '';
-    document.getElementById('new-student-id').value = '';
-    document.getElementById('new-student-balance').value = '0';
+                if (!n || !id || !c) {
+                    alert('Fill all fields');
+                    return;
+                }
 
-    alert('Student added!');
-}
+                if (students.find(s => s.id === id)) {
+                    alert('ID exists');
+                    return;
+                }
+
+                if (saveBtn) {
+                    saveBtn.disabled = true;
+                    saveBtn.textContent = 'Saving...';
+                }
+
+                console.log('Adding student to Supabase...', { id, name: n, class_name: c, starting_balance: b });
+
+                const { data: insertedStudent, error: studentError } = await supabaseClient
+                    .from('students')
+                    .insert([{ id: id, name: n, class_name: c }])
+                    .select('id, name, class_name')
+                    .single();
+
+                if (studentError) {
+                    logSupabaseError('Could not add student', studentError);
+                    return;
+                }
+
+                console.log('Student insert success:', insertedStudent);
+
+                let insertedTx = null;
+                if (b !== 0) {
+                    const { data: txData, error: txError } = await supabaseClient
+                        .from('transactions')
+                        .insert([{ student_id: id, amount: b, reason: 'Starting balance' }])
+                        .select('id, student_id, amount, reason, created_at')
+                        .single();
+
+                    if (txError) {
+                        console.error('Starting balance insert failed. Rolling back student insert.', txError);
+                        await supabaseClient.from('students').delete().eq('id', id);
+                        logSupabaseError('Could not save starting balance', txError);
+                        return;
+                    }
+
+                    insertedTx = txData;
+                    console.log('Starting balance insert success:', insertedTx);
+                }
+
+                students.push({
+                    id: insertedStudent.id,
+                    name: insertedStudent.name,
+                    class: insertedStudent.class_name,
+                    balance: b
+                });
+
+                if (insertedTx) {
+                    transactions.push({
+                        id: insertedTx.id,
+                        studentId: insertedTx.student_id,
+                        studentName: insertedStudent.name,
+                        className: insertedStudent.class_name,
+                        amount: insertedTx.amount,
+                        reason: insertedTx.reason,
+                        date: insertedTx.created_at
+                    });
+                }
+
+                touchData();
+                saveData();
+                loadStudentList();
+                loadBalancesView();
+                loadLeaderboardView();
+                loadDashboard();
+                loadHistory();
+
+                await loadFromSupabase();
+
+                closeModal();
+                document.getElementById('new-student-name').value = '';
+                document.getElementById('new-student-id').value = '';
+                document.getElementById('new-student-balance').value = '0';
+                document.getElementById('new-student-class').value = '';
+
+                alert('Student added!');
+            } catch (err) {
+                console.error('Unexpected addStudent error:', err);
+                alert('Unexpected add student error: ' + (err.message || err));
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = originalBtnText || 'Save Student';
+                }
+            }
+        }
         function loadHistory() { let list = document.getElementById('history-list'); list.innerHTML = transactions.length ? transactions.slice().reverse().map(t => '<div class="transaction-item"><div><h4>' + t.studentName + ' <span style="font-weight:normal;color:#999">(' + t.className + ')</span></h4><p style="font-size:13px;color:#666">' + t.reason + ' • ' + new Date(t.date).toLocaleString() + '</p></div><span class="' + (t.amount > 0 ? 'positive' : 'negative') + '" style="font-size:20px;font-weight:700">' + (t.amount > 0 ? '+' : '') + t.amount + '</span></div>').join('') : '<div class="empty-state">No transactions</div>'; }
         
         function fmtDate(dateStr) { return dateStr ? new Date(dateStr).toLocaleString() : 'Never'; }
