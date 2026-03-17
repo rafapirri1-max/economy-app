@@ -398,6 +398,10 @@
     </div>
 
     <script>
+        const SUPABASE_URL = "https://zffjbnjugnfzuotifeym.supabase.co";
+const SUPABASE_KEY = "sb_publishable_NeNrYcJjbxz888RqhscrZA_O5l22r2O";
+
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         let students = [], transactions = [], classes = [], securityKey = '';
         let appMeta = {};
         try {
