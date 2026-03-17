@@ -456,6 +456,74 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 localStorage.setItem('appMeta', JSON.stringify(appMeta));
             } catch (e) {}
         }
+        async function loadFromSupabase() {
+    try {
+        const { data: classRows, error: classError } = await supabaseClient
+            .from('classes')
+            .select('name')
+            .order('name');
+
+        if (classError) {
+            console.log('Classes load error:', classError);
+            return;
+        }
+
+        const { data: studentRows, error: studentError } = await supabaseClient
+            .from('students')
+            .select('id, name, class_name')
+            .order('name');
+
+        if (studentError) {
+            console.log('Students load error:', studentError);
+            return;
+        }
+
+        const { data: txRows, error: txError } = await supabaseClient
+            .from('transactions')
+            .select('id, student_id, amount, reason, created_at')
+            .order('created_at', { ascending: true });
+
+        if (txError) {
+            console.log('Transactions load error:', txError);
+            return;
+        }
+
+        classes = (classRows || []).map(c => c.name);
+
+        students = (studentRows || []).map(s => ({
+            id: s.id,
+            name: s.name,
+            class: s.class_name,
+            balance: 0
+        }));
+
+        transactions = (txRows || []).map(t => {
+            const student = students.find(s => s.id === t.student_id);
+            return {
+                id: t.id,
+                studentId: t.student_id,
+                studentName: student ? student.name : '',
+                className: student ? student.class : '',
+                amount: t.amount,
+                reason: t.reason,
+                date: t.created_at
+            };
+        });
+
+        recalculateBalancesFromTransactions();
+
+        loadClasses();
+        loadDashboard();
+        loadBalancesView();
+        loadLeaderboardView();
+        loadStudentList();
+        loadHistory();
+
+        console.log('Loaded from Supabase');
+    } catch (err) {
+        console.log('Supabase load failed:', err);
+    }
+}
         recalculateBalancesFromTransactions();
         saveData();
         function generateSignature(id) { let s = 0, d = id + securityKey; for (let i = 0; i < d.length; i++) { s = ((s << 5) - s) + d.charCodeAt(i); s = s & s; } return Math.abs(s).toString(16).toUpperCase().padStart(8, '0'); }
