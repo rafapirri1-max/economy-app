@@ -439,14 +439,33 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function recalculateBalancesFromTransactions() {
             const transactionTotals = new Map();
             transactions.forEach(t => {
-                if (!t || !t.studentId) return;
+                if (!t) return;
+                const studentId = t.studentId || t.student_id;
+                if (!studentId) return;
                 const amount = Number(t.amount) || 0;
-                transactionTotals.set(t.studentId, (transactionTotals.get(t.studentId) || 0) + amount);
+                transactionTotals.set(studentId, (transactionTotals.get(studentId) || 0) + amount);
             });
             students = students.map(s => ({
                 ...s,
                 balance: transactionTotals.get(s.id) || 0
             }));
+        }
+
+        function addTransactionToLocalState(txRow) {
+            if (!txRow) return null;
+            const student = students.find(s => s.id === txRow.student_id);
+            const localTx = {
+                id: txRow.id,
+                studentId: txRow.student_id,
+                studentName: student ? student.name : '',
+                className: student ? student.class : '',
+                amount: Number(txRow.amount) || 0,
+                reason: txRow.reason || '',
+                date: txRow.created_at || new Date().toISOString()
+            };
+            transactions.push(localTx);
+            recalculateBalancesFromTransactions();
+            return localTx;
         }
         function saveData() {
             try {
@@ -642,19 +661,19 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             try {
                 const tx = await insertTransactionToSupabase(s.id, currentSession.amount, currentSession.reason);
-                s.balance += currentSession.amount; 
-                currentSession.scannedStudents.push(s); 
+                const localTx = addTransactionToLocalState(tx);
+                const updatedStudent = students.find(x => x.id === id) || s;
+
+                currentSession.scannedStudents.push(updatedStudent); 
                 touchData(); 
                 currentSession.totalAmount += currentSession.amount; 
-                const localTx = { id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: currentSession.amount, reason: currentSession.reason, date: tx.created_at };
-                transactions.push(localTx); 
-                lastTransaction = { transaction: localTx, student: s }; 
+                lastTransaction = { transaction: localTx, student: updatedStudent }; 
                 saveData(); 
                 document.getElementById('session-count').textContent = currentSession.scannedStudents.length; 
                 document.getElementById('session-total').textContent = currentSession.totalAmount; 
-                log('success', '✓ ' + s.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + s.balance + ')'); 
+                log('success', '✓ ' + updatedStudent.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + updatedStudent.balance + ')'); 
                 document.getElementById('undo-bar').classList.add('active'); 
-                document.getElementById('undo-text').textContent = s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; 
+                document.getElementById('undo-text').textContent = updatedStudent.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; 
                 if (navigator.vibrate) navigator.vibrate(50); 
                 setTimeout(() => document.getElementById('undo-bar').classList.remove('active'), 5000); 
             } catch (err) {
@@ -671,11 +690,11 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             const { error } = await supabaseClient.from('transactions').delete().eq('id', t.id);
             if (error) return alert(error.message);
 
-            s.balance -= t.amount; 
             currentSession.scannedStudents = currentSession.scannedStudents.filter(x => x.id !== s.id); 
             touchData(); 
             currentSession.totalAmount -= t.amount; 
             transactions = transactions.filter(x => x.id !== t.id); 
+            recalculateBalancesFromTransactions();
             saveData(); 
             document.getElementById('session-count').textContent = currentSession.scannedStudents.length; 
             document.getElementById('session-total').textContent = currentSession.totalAmount; 
@@ -701,16 +720,21 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             try {
                 const tx = await insertTransactionToSupabase(s.id, a, r);
-                s.balance += a; 
+                addTransactionToLocalState(tx);
+                const updatedStudent = students.find(x => x.id === s.id) || s;
                 touchData(); 
-                transactions.push({ id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: a, reason: r, date: tx.created_at }); 
                 saveData(); 
                 document.getElementById('quick-result').style.display = 'block'; 
-                document.getElementById('quick-avatar').textContent = s.name.charAt(0); 
-                document.getElementById('quick-name').textContent = s.name; 
-                document.getElementById('quick-class').textContent = s.class; 
-                document.getElementById('quick-balance').textContent = s.balance; 
-                document.getElementById('quick-confirmation').innerHTML = '<span style="color:' + (a > 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700">' + (a > 0 ? '+' : '') + a + ' ' + r + '</span><br><span style="font-size:14px;color:#666">Balance: ' + s.balance + '</span>'; 
+                document.getElementById('quick-avatar').textContent = updatedStudent.name.charAt(0); 
+                document.getElementById('quick-name').textContent = updatedStudent.name; 
+                document.getElementById('quick-class').textContent = updatedStudent.class; 
+                document.getElementById('quick-balance').textContent = updatedStudent.balance; 
+                document.getElementById('quick-confirmation').innerHTML = '<span style="color:' + (a > 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700">' + (a > 0 ? '+' : '') + a + ' ' + r + '</span><br><span style="font-size:14px;color:#666">Balance: ' + updatedStudent.balance + '</span>'; 
+                loadStudentList();
+                loadBalancesView();
+                loadLeaderboardView();
+                loadDashboard();
+                loadHistory();
                 if (navigator.vibrate) navigator.vibrate(50); 
             } catch (err) {
                 alert(err.message || 'Could not save transaction');
@@ -732,9 +756,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             try {
                 const tx = await insertTransactionToSupabase(s.id, amount, reason);
-                s.balance += amount; 
+                addTransactionToLocalState(tx);
                 touchData(); 
-                transactions.push({ id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: amount, reason: reason, date: tx.created_at }); 
                 saveData(); 
                 refreshStudentViews(id); 
             } catch (err) {
@@ -746,8 +769,11 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         async function deleteStudent(id) { 
             if (!confirm('Delete student?')) return;
 
-            const { error } = await supabaseClient.from('students').delete().eq('id', id);
-            if (error) return alert(error.message);
+            const { error: txDeleteError } = await supabaseClient.from('transactions').delete().eq('student_id', id);
+            if (txDeleteError) return alert(txDeleteError.message);
+
+            const { error: studentDeleteError } = await supabaseClient.from('students').delete().eq('id', id);
+            if (studentDeleteError) return alert(studentDeleteError.message);
 
             students = students.filter(s => s.id !== id); 
             transactions = transactions.filter(t => t.studentId !== id); 
@@ -836,19 +862,13 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                     id: insertedStudent.id,
                     name: insertedStudent.name,
                     class: insertedStudent.class_name,
-                    balance: b
+                    balance: 0
                 });
 
                 if (insertedTx) {
-                    transactions.push({
-                        id: insertedTx.id,
-                        studentId: insertedTx.student_id,
-                        studentName: insertedStudent.name,
-                        className: insertedStudent.class_name,
-                        amount: insertedTx.amount,
-                        reason: insertedTx.reason,
-                        date: insertedTx.created_at
-                    });
+                    addTransactionToLocalState(insertedTx);
+                } else {
+                    recalculateBalancesFromTransactions();
                 }
 
                 touchData();
