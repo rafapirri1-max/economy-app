@@ -87,6 +87,7 @@
             <button class="nav-tab active" onclick="showScreen('dashboard', this)">📊 Dashboard</button>
             <button class="nav-tab" onclick="showScreen('batch', this)">⚡ Batch</button>
             <button class="nav-tab" onclick="showScreen('quick', this)">💳 Quick</button>
+            <button class="nav-tab" onclick="showScreen('student-check', this)">📱 Student Check</button>
             <button class="nav-tab" onclick="showScreen('students', this)">👥 Students</button>
             <button class="nav-tab" onclick="showScreen('balances', this)">💰 Balances</button>
             <button class="nav-tab" onclick="showScreen('leaderboard', this)">🏆 Leaderboard</button>
@@ -220,6 +221,30 @@
                     <div id="quick-confirmation" style="text-align: center; margin: 20px 0; font-size: 18px;"></div>
                     <button class="btn" onclick="resetQuickTransaction()">Scan Another</button>
                 </div>
+            </div>
+        </div>
+        <div id="student-check" class="screen">
+            <div class="card">
+                <div class="card-title">📱 Student Balance Check</div>
+                <div class="security-info">
+                    Students can scan their own QR code to check their balance and recent history. Anyone with a student's QR can view that student's balance.
+                </div>
+                <button class="btn" onclick="startStudentBalanceScan()">📷 Scan Student QR</button>
+                <div id="student-balance-scanner" style="display: none;">
+                    <div class="scanner-container">
+                        <div id="student-balance-qr-reader"></div>
+                        <div class="scanner-overlay">
+                            <div class="scanner-line"></div>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" onclick="stopStudentBalanceScan()">⏹️ Cancel</button>
+                </div>
+                <div class="form-group" style="margin-top: 20px;">
+                    <label>Or enter Student ID</label>
+                    <input type="text" id="student-check-id" placeholder="Enter student ID">
+                    <button class="btn btn-secondary" onclick="lookupStudentBalanceById()" style="margin-top:10px;">🔎 Check Balance</button>
+                </div>
+                <div id="student-check-result" style="display:none; margin-top:20px;"></div>
             </div>
         </div>
         <div id="students" class="screen">
@@ -398,7 +423,7 @@
     </div>
 
     <script>
-        const SUPABASE_URL = "https://zffjbnjugnfzuotifyem.supabase.co";
+        const SUPABASE_URL = "https://zffjbnjugnfzuotifeym.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NeNrYcJjbxz888RqhscrZA_O5l22r2O";
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -526,12 +551,103 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 }
         recalculateBalancesFromTransactions();
         saveData();
+
+        let realtimeChannel = null;
+
+        async function createTransactionRecord(studentId, amount, reason) {
+            const { data, error } = await supabaseClient
+                .from('transactions')
+                .insert([{ student_id: studentId, amount: amount, reason: reason }])
+                .select();
+            if (error) {
+                alert(error.message);
+                return null;
+            }
+            return data && data[0] ? data[0] : null;
+        }
+
+        async function deleteTransactionRecord(transactionId) {
+            const { error } = await supabaseClient
+                .from('transactions')
+                .delete()
+                .eq('id', transactionId);
+            if (error) {
+                alert(error.message);
+                return false;
+            }
+            return true;
+        }
+
+        function renderStudentCheckCard(id) {
+            const s = students.find(x => x.id === id);
+            if (!s) return '<div class="empty-state">Student not found.</div>';
+            const recent = transactions.filter(t => t.studentId === id).slice().reverse().slice(0, 10);
+            return `<div class="student-card" style="cursor:default"><div class="student-avatar">${s.name.charAt(0)}</div><div><h4>${s.name}</h4><p>${s.id} • ${s.class}</p></div><div class="balance-badge">${s.balance}</div></div><h4 style="margin-top:20px">Recent transactions</h4>` +
+                (recent.length ? recent.map(t => `<div class="transaction-item"><div><div>${t.reason}</div><div class="muted-text">${new Date(t.date).toLocaleString()}</div></div><span class="${t.amount > 0 ? 'positive' : 'negative'}">${t.amount > 0 ? '+' : ''}${t.amount}</span></div>`).join('') : '<p style="color:#999">No transactions yet.</p>');
+        }
+
+        function showStudentBalanceCard(id) {
+            const box = document.getElementById('student-check-result');
+            box.style.display = 'block';
+            box.innerHTML = renderStudentCheckCard(id);
+        }
+
+        function startStudentBalanceScan() {
+            document.getElementById('student-balance-scanner').style.display = 'block';
+            startScanner('student-balance-qr-reader', onStudentBalanceScan);
+        }
+
+        function stopStudentBalanceScan() {
+            stopScanning();
+            document.getElementById('student-balance-scanner').style.display = 'none';
+        }
+
+        async function onStudentBalanceScan(qr) {
+            stopStudentBalanceScan();
+            const v = verifyQR(qr);
+            if (!v.valid) return alert('Invalid QR');
+            await loadFromSupabase();
+            showStudentBalanceCard(v.studentId);
+        }
+
+        async function lookupStudentBalanceById() {
+            const id = (document.getElementById('student-check-id').value || '').trim();
+            if (!id) return alert('Enter student ID');
+            await loadFromSupabase();
+            showStudentBalanceCard(id);
+        }
+
+        function subscribeToRealtime() {
+            if (realtimeChannel) return;
+            realtimeChannel = supabaseClient
+                .channel('classroom-economy-live')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, async () => { await loadFromSupabase(); })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, async () => { await loadFromSupabase(); })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'classes' }, async () => { await loadFromSupabase(); })
+                .subscribe();
+        }
+
         function generateSignature(id) { let s = 0, d = id + securityKey; for (let i = 0; i < d.length; i++) { s = ((s << 5) - s) + d.charCodeAt(i); s = s & s; } return Math.abs(s).toString(16).toUpperCase().padStart(8, '0'); }
         function verifyQR(qr) { try { let p = qr.split('|'); if (p.length !== 2) return { valid: false }; return { valid: generateSignature(p[0]) === p[1], studentId: p[0] }; } catch (e) { return { valid: false }; } }
         function secureQR(id) { return id + '|' + generateSignature(id); }
         function loadClasses() { let opts = '<option value="">Select Class</option>' + classes.map(c => `<option value="${c}">${c}</option>`).join(''); document.getElementById('batch-class').innerHTML = opts; document.getElementById('new-student-class').innerHTML = opts; let list = document.getElementById('classes-list'); list.innerHTML = classes.length ? classes.map(c => `<div class="class-tag">${c}<button onclick="deleteClass('${c}')">×</button></div>`).join('') : '<p style="color:#999">No classes yet.</p>'; }
-        function addClass() { let n = document.getElementById('new-class-name').value.trim(); if (!n) return alert('Enter class name'); if (classes.includes(n)) return alert('Class exists'); classes.push(n); touchData(); saveData(); loadClasses(); document.getElementById('new-class-name').value = ''; alert('Class added!'); }
-        function deleteClass(n) { if (confirm('Delete "' + n + '"?')) { classes = classes.filter(c => c !== n); touchData(); saveData(); loadClasses(); } }
+        async function addClass() {
+            let n = document.getElementById('new-class-name').value.trim();
+            if (!n) return alert('Enter class name');
+            if (classes.includes(n)) return alert('Class exists');
+            const { error } = await supabaseClient.from('classes').insert([{ name: n }]);
+            if (error) return alert(error.message);
+            document.getElementById('new-class-name').value = '';
+            await loadFromSupabase();
+            alert('Class added!');
+        }
+        async function deleteClass(n) {
+            if (!confirm('Delete "' + n + '"?')) return;
+            if (students.some(s => s.class === n)) return alert('This class still has students. Move or delete them first.');
+            const { error } = await supabaseClient.from('classes').delete().eq('name', n);
+            if (error) return alert(error.message);
+            await loadFromSupabase();
+        }
         function showScreen(id, el = null) {
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             document.getElementById(id).classList.add('active');
@@ -540,6 +656,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             if (id === 'dashboard') loadDashboard();
             if (id === 'students') loadStudentList();
             if (id === 'balances') loadBalancesView();
+            if (id === 'student-check') document.getElementById('student-check-result').style.display = document.getElementById('student-check-result').innerHTML ? 'block' : 'none';
             if (id === 'leaderboard') loadLeaderboardView();
             if (id === 'history') loadHistory();
             if (id === 'classes') loadClasses();
@@ -576,15 +693,82 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 }
         function stopScanning() { if (html5QrCode) { html5QrCode.stop().then(() => html5QrCode = null); } }
         function onBatchScan(qr) { let v = verifyQR(qr); if (!v.valid) { document.getElementById('fraud-warning').classList.add('active'); log('error', '🚫 FRAUD!'); if (navigator.vibrate) navigator.vibrate([200, 100, 200]); return; } document.getElementById('fraud-warning').classList.remove('active'); processBatch(v.studentId); }
-        function processBatch(id) { if (currentSession.scannedStudents.find(s => s.id === id)) { log('warning', '⚠️ Already scanned'); if (navigator.vibrate) navigator.vibrate(200); return; } let s = students.find(x => x.id === id); if (!s) { log('error', '❌ Not found'); if (navigator.vibrate) navigator.vibrate([100, 100, 100]); return; } if (s.class !== currentSession.classFilter) { log('error', '❌ Wrong class'); if (navigator.vibrate) navigator.vibrate([100, 100, 100]); return; } s.balance += currentSession.amount; currentSession.scannedStudents.push(s); touchData(); currentSession.totalAmount += currentSession.amount; transactions.push({ id: Date.now(), studentId: s.id, studentName: s.name, className: s.class, amount: currentSession.amount, reason: currentSession.reason, date: new Date().toISOString() }); lastTransaction = { transaction: transactions[transactions.length - 1], student: s }; saveData(); document.getElementById('session-count').textContent = currentSession.scannedStudents.length; document.getElementById('session-total').textContent = currentSession.totalAmount; log('success', '✓ ' + s.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + s.balance + ')'); document.getElementById('undo-bar').classList.add('active'); document.getElementById('undo-text').textContent = s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; if (navigator.vibrate) navigator.vibrate(50); setTimeout(() => document.getElementById('undo-bar').classList.remove('active'), 5000); }
-        function undoLastScan() { if (!lastTransaction) return; let { transaction: t, student: s } = lastTransaction; s.balance -= t.amount; currentSession.scannedStudents = currentSession.scannedStudents.filter(x => x.id !== s.id); touchData(); currentSession.totalAmount -= t.amount; transactions = transactions.filter(x => x.id !== t.id); saveData(); document.getElementById('session-count').textContent = currentSession.scannedStudents.length; document.getElementById('session-total').textContent = currentSession.totalAmount; log('warning', '↩️ Undone: ' + s.name); document.getElementById('undo-bar').classList.remove('active'); lastTransaction = null; }
+        async function processBatch(id) {
+            if (currentSession.scannedStudents.find(s => s.id === id)) {
+                log('warning', '⚠️ Already scanned');
+                if (navigator.vibrate) navigator.vibrate(200);
+                return;
+            }
+            let s = students.find(x => x.id === id);
+            if (!s) {
+                log('error', '❌ Not found');
+                if (navigator.vibrate) navigator.vibrate([100, 100, 100]);
+                return;
+            }
+            if (s.class !== currentSession.classFilter) {
+                log('error', '❌ Wrong class');
+                if (navigator.vibrate) navigator.vibrate([100, 100, 100]);
+                return;
+            }
+            const created = await createTransactionRecord(s.id, currentSession.amount, currentSession.reason);
+            if (!created) return;
+            currentSession.scannedStudents.push({ id: s.id, name: s.name });
+            currentSession.totalAmount += currentSession.amount;
+            lastTransaction = { transactionId: created.id, studentId: s.id };
+            await loadFromSupabase();
+            const refreshed = students.find(x => x.id === id) || s;
+            document.getElementById('session-count').textContent = currentSession.scannedStudents.length;
+            document.getElementById('session-total').textContent = currentSession.totalAmount;
+            log('success', '✓ ' + refreshed.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + refreshed.balance + ')');
+            document.getElementById('undo-bar').classList.add('active');
+            document.getElementById('undo-text').textContent = refreshed.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount;
+            if (navigator.vibrate) navigator.vibrate(50);
+            setTimeout(() => document.getElementById('undo-bar').classList.remove('active'), 5000);
+        }
+        async function undoLastScan() {
+            if (!lastTransaction) return;
+            const ok = await deleteTransactionRecord(lastTransaction.transactionId);
+            if (!ok) return;
+            currentSession.scannedStudents = currentSession.scannedStudents.filter(x => x.id !== lastTransaction.studentId);
+            currentSession.totalAmount -= currentSession.amount || 0;
+            await loadFromSupabase();
+            document.getElementById('session-count').textContent = currentSession.scannedStudents.length;
+            document.getElementById('session-total').textContent = currentSession.totalAmount;
+            log('warning', '↩️ Undone');
+            document.getElementById('undo-bar').classList.remove('active');
+            lastTransaction = null;
+        }
         function log(type, msg) { let l = document.getElementById('session-log'); if (l.children.length === 1 && l.children[0].textContent.includes('Scan')) l.innerHTML = ''; let d = document.createElement('div'); d.className = 'log-item'; d.innerHTML = '<span>' + msg + '</span>'; l.insertBefore(d, l.firstChild); }
         function finishBatchSession() { stopScanning(); alert('Complete!\nStudents: ' + currentSession.scannedStudents.length + '\nTotal: ' + currentSession.totalAmount); cancelBatch(); }
         function cancelBatchSession() { cancelBatch(); } function cancelBatch() { stopScanning(); currentSession = { active: false, scannedStudents: [], totalAmount: 0 }; document.getElementById('batch-scan-area').style.display = 'none'; document.getElementById('session-count').textContent = '0'; document.getElementById('session-total').textContent = '0'; document.getElementById('session-log').innerHTML = '<div style="text-align:center;color:#999">Scan students...</div>'; document.getElementById('undo-bar').classList.remove('active'); document.getElementById('fraud-warning').classList.remove('active'); }
         function setQuickReason(r) { document.getElementById('quick-reason').value = r; }
         function startQuickScan() { document.getElementById('quick-scanner').style.display = 'block'; document.getElementById('quick-fraud-warning').classList.remove('active'); startScanner('quick-qr-reader', onQuickScan); }
         function stopQuickScan() { stopScanning(); document.getElementById('quick-scanner').style.display = 'none'; }
-        function onQuickScan(qr) { stopQuickScan(); let v = verifyQR(qr); if (!v.valid) { document.getElementById('quick-fraud-warning').classList.add('active'); alert('🚫 FRAUD!'); return; } document.getElementById('quick-fraud-warning').classList.remove('active'); let a = parseInt(document.getElementById('quick-amount').value), r = document.getElementById('quick-reason').value; if (!a || !r) return alert('Enter amount & reason'); let s = students.find(x => x.id === v.studentId); if (!s) return alert('Student not found'); s.balance += a; touchData(); transactions.push({ id: Date.now(), studentId: s.id, studentName: s.name, className: s.class, amount: a, reason: r, date: new Date().toISOString() }); saveData(); document.getElementById('quick-result').style.display = 'block'; document.getElementById('quick-avatar').textContent = s.name.charAt(0); document.getElementById('quick-name').textContent = s.name; document.getElementById('quick-class').textContent = s.class; document.getElementById('quick-balance').textContent = s.balance; document.getElementById('quick-confirmation').innerHTML = '<span style="color:' + (a > 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700">' + (a > 0 ? '+' : '') + a + ' ' + r + '</span><br><span style="font-size:14px;color:#666">Balance: ' + s.balance + '</span>'; if (navigator.vibrate) navigator.vibrate(50); }
+        async function onQuickScan(qr) {
+            stopQuickScan();
+            let v = verifyQR(qr);
+            if (!v.valid) {
+                document.getElementById('quick-fraud-warning').classList.add('active');
+                alert('🚫 FRAUD!');
+                return;
+            }
+            document.getElementById('quick-fraud-warning').classList.remove('active');
+            let a = parseInt(document.getElementById('quick-amount').value), r = document.getElementById('quick-reason').value;
+            if (!a || !r) return alert('Enter amount & reason');
+            let s = students.find(x => x.id === v.studentId);
+            if (!s) return alert('Student not found');
+            const created = await createTransactionRecord(s.id, a, r);
+            if (!created) return;
+            await loadFromSupabase();
+            s = students.find(x => x.id === v.studentId) || s;
+            document.getElementById('quick-result').style.display = 'block';
+            document.getElementById('quick-avatar').textContent = s.name.charAt(0);
+            document.getElementById('quick-name').textContent = s.name;
+            document.getElementById('quick-class').textContent = s.class;
+            document.getElementById('quick-balance').textContent = s.balance;
+            document.getElementById('quick-confirmation').innerHTML = '<span style="color:' + (a > 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700">' + (a > 0 ? '+' : '') + a + ' ' + r + '</span><br><span style="font-size:14px;color:#666">Balance: ' + s.balance + '</span>';
+            if (navigator.vibrate) navigator.vibrate(50);
+        }
         function resetQuickTransaction() { document.getElementById('quick-result').style.display = 'none'; document.getElementById('quick-fraud-warning').classList.remove('active'); }
         function loadStudentList() { let list = document.getElementById('student-list'); list.innerHTML = students.length ? students.map(s => `<div class="student-card" onclick="showStudentDetail('${s.id}')"><div class="student-avatar">${s.name.charAt(0)}</div><div><h4>${s.name}</h4><p>${s.id} • ${s.class}</p></div><div class="balance-badge">${s.balance}</div></div>`).join('') : '<div class="empty-state">No students yet.</div>'; }
         function startStudentLookup() { document.getElementById('lookup-scanner').style.display = 'block'; startScanner('lookup-qr-reader', qr => { stopLookupScan(); let v = verifyQR(qr); if (v.valid) showStudentDetail(v.studentId); else alert('Invalid QR'); }); }
@@ -595,10 +779,25 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function showStudentDetail(id) { let s = students.find(x => x.id === id); if (!s) return alert('Not found'); document.getElementById('student-detail').style.display = 'block'; document.getElementById('detail-content').innerHTML = renderStudentDetailHTML(id); setTimeout(() => renderStudentQR(id, 'qrcode-' + s.id + '-detail'), 100); document.getElementById('student-detail').scrollIntoView({ behavior: 'smooth' }); }
         function openStudentDetailModal(id) { let s = students.find(x => x.id === id); if (!s) return alert('Not found'); document.getElementById('student-detail-modal').classList.add('active'); document.getElementById('student-detail-modal-content').innerHTML = renderStudentDetailHTML(id); setTimeout(() => renderStudentQR(id, 'qrcode-' + s.id + '-detail'), 100); }
         function closeStudentDetailModal() { document.getElementById('student-detail-modal').classList.remove('active'); }
-        function quickAdjustStudent(id, amount, reason) { const s = students.find(x => x.id === id); if (!s) return alert('Student not found'); s.balance += amount; touchData(); transactions.push({ id: Date.now(), studentId: s.id, studentName: s.name, className: s.class, amount: amount, reason: reason, date: new Date().toISOString() }); saveData(); refreshStudentViews(id); }
+        async function quickAdjustStudent(id, amount, reason) {
+            const s = students.find(x => x.id === id);
+            if (!s) return alert('Student not found');
+            const created = await createTransactionRecord(id, amount, reason);
+            if (!created) return;
+            await loadFromSupabase();
+            refreshStudentViews(id);
+        }
         function manualAdjustStudent(id, mode) { const amountInput = document.getElementById('detail-amount-' + id); const reasonInput = document.getElementById('detail-reason-' + id); let amount = parseInt(amountInput.value, 10); const reason = (reasonInput.value || '').trim(); if (!amount || amount < 0) return alert('Enter a valid positive amount'); if (!reason) return alert('Enter a reason'); if (mode === 'deduct') amount = -amount; quickAdjustStudent(id, amount, reason); amountInput.value=''; reasonInput.value=''; }
         function printCard(id) { let s = students.find(x => x.id === id), sec = secureQR(id), w = window.open('', '_blank'), html = '<html><head><title>' + s.name + '</title><style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f0f0f0}.card{background:white;border:3px solid #333;border-radius:15px;padding:30px;width:350px;text-align:center;position:relative}.header{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:15px;margin:-30px -30px 20px -30px;border-radius:12px 12px 0 0;font-weight:bold;font-size:18px}.name{font-size:24px;font-weight:bold;margin:20px 0 5px}.class{color:#666;margin-bottom:20px}.qr{margin:20px 0}.hash{font-family:monospace;font-size:10px;color:#999;margin-top:10px}.footer{font-size:12px;color:#999;margin-top:20px;border-top:1px solid #eee;padding-top:10px}.seal{position:absolute;top:10px;right:10px;background:#e74c3c;color:white;padding:5px 10px;border-radius:5px;font-size:10px;font-weight:bold;transform:rotate(15deg)}</style></head><body><div class="card"><div class="seal">OFFICIAL</div><div class="header">CLASSROOM ECONOMY</div><div class="name">' + s.name + '</div><div class="class">' + s.class + ' • ID: ' + s.id + '</div><div class="qr"><img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(sec) + '"></div><div class="hash">Secure: ' + sec.split('|')[1] + '</div><div class="footer">Cryptographically secured card</div></div></body></html>'; w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500); }
-        function deleteStudent(id) { if (confirm('Delete student?')) { students = students.filter(s => s.id !== id); transactions = transactions.filter(t => t.studentId !== id); recalculateBalancesFromTransactions(); touchData(); saveData(); document.getElementById('student-detail').style.display = 'none'; loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); alert('Deleted'); } }
+        async function deleteStudent(id) {
+            if (!confirm('Delete student?')) return;
+            const { error } = await supabaseClient.from('students').delete().eq('id', id);
+            if (error) return alert(error.message);
+            document.getElementById('student-detail').style.display = 'none';
+            closeStudentDetailModal();
+            await loadFromSupabase();
+            alert('Deleted');
+        }
         function showAddStudentModal() { document.getElementById('add-student-modal').classList.add('active'); loadClasses(); }
         function closeModal() { document.getElementById('add-student-modal').classList.remove('active'); }
         async function addStudent() {
@@ -977,6 +1176,7 @@ function logSync(msg) {
 
 document.addEventListener('DOMContentLoaded', async () => { 
     await loadFromSupabase();
+    subscribeToRealtime();
 
     updatePresets();
     updateSyncStatus();
