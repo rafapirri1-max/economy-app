@@ -930,16 +930,19 @@ function logSync(msg) {
     log.insertBefore(div, log.firstChild);
 }
 
-document.addEventListener('DOMContentLoaded', () => { 
-    loadClasses(); 
-    loadDashboard(); 
+document.addEventListener('DOMContentLoaded', async () => { 
+    await loadFromSupabase();
+
     updatePresets();
     updateSyncStatus();
     loadBalancesView();
     loadLeaderboardView();
     loadStudentList();
+
     document.getElementById('backup-file').addEventListener('change', importBackupFromFile);
-    document.getElementById('student-detail-modal').addEventListener('click', function(e){ if (e.target === this) closeStudentDetailModal(); });
+    document.getElementById('student-detail-modal').addEventListener('click', function(e){ 
+        if (e.target === this) closeStudentDetailModal(); 
+    });
 });
     </script>
 </body>
