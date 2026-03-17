@@ -601,7 +601,52 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function deleteStudent(id) { if (confirm('Delete student?')) { students = students.filter(s => s.id !== id); transactions = transactions.filter(t => t.studentId !== id); recalculateBalancesFromTransactions(); touchData(); saveData(); document.getElementById('student-detail').style.display = 'none'; loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); alert('Deleted'); } }
         function showAddStudentModal() { document.getElementById('add-student-modal').classList.add('active'); loadClasses(); }
         function closeModal() { document.getElementById('add-student-modal').classList.remove('active'); }
-        function addStudent() { let n = document.getElementById('new-student-name').value.trim(), id = document.getElementById('new-student-id').value.trim(), c = document.getElementById('new-student-class').value, b = parseInt(document.getElementById('new-student-balance').value) || 0; if (!n || !id || !c) return alert('Fill all fields'); if (students.find(s => s.id === id)) return alert('ID exists'); students.push({ id: id, name: n, class: c, balance: b }); if (b !== 0) { transactions.push({ id: Date.now(), studentId: id, studentName: n, className: c, amount: b, reason: 'Starting balance', date: new Date().toISOString() }); } recalculateBalancesFromTransactions(); touchData(); saveData(); closeModal(); loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); document.getElementById('new-student-name').value = ''; document.getElementById('new-student-id').value = ''; document.getElementById('new-student-balance').value = '0'; alert('Student added!'); }
+        async function addStudent() {
+    let n = document.getElementById('new-student-name').value.trim();
+    let id = document.getElementById('new-student-id').value.trim();
+    let c = document.getElementById('new-student-class').value;
+    let b = parseInt(document.getElementById('new-student-balance').value) || 0;
+
+    if (!n || !id || !c) return alert('Fill all fields');
+    if (students.find(s => s.id === id)) return alert('ID exists');
+
+    const { error: studentError } = await supabaseClient
+        .from('students')
+        .insert([{
+            id: id,
+            name: n,
+            class_name: c
+        }]);
+
+    if (studentError) {
+        alert(studentError.message);
+        return;
+    }
+
+    if (b !== 0) {
+        const { error: txError } = await supabaseClient
+            .from('transactions')
+            .insert([{
+                student_id: id,
+                amount: b,
+                reason: 'Starting balance'
+            }]);
+
+        if (txError) {
+            alert(txError.message);
+            return;
+        }
+    }
+
+    await loadFromSupabase();
+
+    closeModal();
+    document.getElementById('new-student-name').value = '';
+    document.getElementById('new-student-id').value = '';
+    document.getElementById('new-student-balance').value = '0';
+
+    alert('Student added!');
+}
         function loadHistory() { let list = document.getElementById('history-list'); list.innerHTML = transactions.length ? transactions.slice().reverse().map(t => '<div class="transaction-item"><div><h4>' + t.studentName + ' <span style="font-weight:normal;color:#999">(' + t.className + ')</span></h4><p style="font-size:13px;color:#666">' + t.reason + ' • ' + new Date(t.date).toLocaleString() + '</p></div><span class="' + (t.amount > 0 ? 'positive' : 'negative') + '" style="font-size:20px;font-weight:700">' + (t.amount > 0 ? '+' : '') + t.amount + '</span></div>').join('') : '<div class="empty-state">No transactions</div>'; }
         
         function fmtDate(dateStr) { return dateStr ? new Date(dateStr).toLocaleString() : 'Never'; }
