@@ -432,7 +432,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         if (classes.length === 0) { classes = ['Year 7 GP', 'Year 8 GP', 'Year 9 GP']; }
         let currentSession = { active: false, scannedStudents: [], totalAmount: 0 }, lastTransaction = null, html5QrCode = null;
         let batchProcessingIds = new Set();
-        const normalSounds = [
+
+        const normalSoundPaths = [
             "sounds/mario-coin.wav",
             "sounds/roblox-oof.wav",
             "sounds/windows-error.wav",
@@ -444,8 +445,43 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             "sounds/amongus.wav",
             "sounds/minecraft.wav"
         ];
-        const legendarySound = "sounds/legendary.wav";
+        const legendarySoundPath = "sounds/legendary.wav";
+        const preloadedNormalSounds = [];
+        let preloadedLegendarySound = null;
         let lastSoundTime = 0;
+
+        function preloadSounds() {
+            preloadedNormalSounds.length = 0;
+
+            normalSoundPaths.forEach(path => {
+                const audio = new Audio(path);
+                audio.preload = "auto";
+                audio.load();
+                preloadedNormalSounds.push(audio);
+            });
+
+            preloadedLegendarySound = new Audio(legendarySoundPath);
+            preloadedLegendarySound.preload = "auto";
+            preloadedLegendarySound.load();
+        }
+
+        function unlockSounds() {
+            try {
+                [...preloadedNormalSounds, preloadedLegendarySound].filter(Boolean).forEach(audio => {
+                    const clone = audio.cloneNode();
+                    clone.volume = 0;
+                    const p = clone.play();
+                    if (p && typeof p.then === "function") {
+                        p.then(() => {
+                            clone.pause();
+                            clone.currentTime = 0;
+                        }).catch(() => {});
+                    }
+                });
+            } catch (err) {
+                console.error('Sound unlock error:', err);
+            }
+        }
 
         function playScanSound() {
             const now = Date.now();
@@ -453,14 +489,18 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             lastSoundTime = now;
 
             try {
-                let audio;
+                let sourceAudio;
                 if (Math.random() < 0.01) {
-                    audio = new Audio(legendarySound);
+                    sourceAudio = preloadedLegendarySound;
                     showLegendaryPopup();
                 } else {
-                    const i = Math.floor(Math.random() * normalSounds.length);
-                    audio = new Audio(normalSounds[i]);
+                    const i = Math.floor(Math.random() * preloadedNormalSounds.length);
+                    sourceAudio = preloadedNormalSounds[i];
                 }
+
+                if (!sourceAudio) return;
+
+                const audio = sourceAudio.cloneNode();
                 audio.volume = 1;
                 audio.play().catch(err => console.error('Sound play error:', err));
             } catch (err) {
@@ -483,6 +523,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             document.body.appendChild(div);
             setTimeout(() => div.remove(), 1000);
         }
+
+
         function touchData(sourceLabel = appMeta.deviceName) {
             appMeta.lastModified = new Date().toISOString();
             appMeta.lastUpdatedBy = sourceLabel;
@@ -1261,6 +1303,16 @@ function logSync(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => { 
+    preloadSounds();
+
+    const unlockOnce = () => {
+        unlockSounds();
+        document.removeEventListener('click', unlockOnce);
+        document.removeEventListener('touchstart', unlockOnce);
+    };
+    document.addEventListener('click', unlockOnce, { once: true });
+    document.addEventListener('touchstart', unlockOnce, { once: true });
+
     await loadFromSupabase();
     subscribeToRealtime();
 
