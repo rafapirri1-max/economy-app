@@ -645,6 +645,34 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   });
 }
         function stopScanning() { if (html5QrCode) { html5QrCode.stop().then(() => html5QrCode = null); } }
+        function playScanSuccessSound() {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                if (!window.scanAudioContext) {
+                    window.scanAudioContext = new AudioCtx();
+                }
+                const ctx = window.scanAudioContext;
+                if (ctx.state === 'suspended') {
+                    ctx.resume();
+                }
+                const now = ctx.currentTime;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now);
+                osc.frequency.linearRampToValueAtTime(1320, now + 0.08);
+                gain.gain.setValueAtTime(0.0001, now);
+                gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.14);
+            } catch (err) {
+                console.log('Scan sound error:', err);
+            }
+        }
         function onBatchScan(qr) { let v = verifyQR(qr); if (!v.valid) { document.getElementById('fraud-warning').classList.add('active'); log('error', '🚫 FRAUD!'); if (navigator.vibrate) navigator.vibrate([200, 100, 200]); return; } document.getElementById('fraud-warning').classList.remove('active'); processBatch(v.studentId); }
         async function processBatch(id) { 
             if (currentSession.scannedStudents.find(s => s.id === id) || batchProcessingIds.has(id)) { 
@@ -672,6 +700,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 document.getElementById('session-count').textContent = currentSession.scannedStudents.length; 
                 document.getElementById('session-total').textContent = currentSession.totalAmount; 
                 log('success', '✓ ' + updatedStudent.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + updatedStudent.balance + ')'); 
+                playScanSuccessSound();
                 document.getElementById('undo-bar').classList.add('active'); 
                 document.getElementById('undo-text').textContent = updatedStudent.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; 
                 if (navigator.vibrate) navigator.vibrate(50); 
