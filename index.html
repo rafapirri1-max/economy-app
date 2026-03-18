@@ -906,9 +906,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 saveData();
                 playScanSound();
                 if (navigator.vibrate) navigator.vibrate(50);
-                alert('Complete!
-Students: ' + currentSession.scannedStudents.length + '
-Total: ' + currentSession.totalAmount);
+                alert('Complete!\nStudents: ' + currentSession.scannedStudents.length + '\nTotal: ' + currentSession.totalAmount);
                 cancelBatch();
             } catch (err) {
                 console.error('Batch finish failed:', err);
