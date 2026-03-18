@@ -1,3 +1,20 @@
+
+const normalSounds = [
+  "sounds/mario-coin.wav",
+  "sounds/roblox-oof.wav",
+  "sounds/windows-error.wav",
+  "sounds/discord-ping.wav",
+  "sounds/iphone-ping.wav",
+  "sounds/cash.wav",
+  "sounds/nice.wav",
+  "sounds/laugh.wav",
+  "sounds/amongus.wav",
+  "sounds/minecraft.wav"
+];
+
+const legendarySound = "sounds/legendary.wav";
+let lastSoundTime = 0;
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,62 +22,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Classroom Economy System</title>
     <meta name="theme-color" content="#667eea">
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
-// ===== Meme Sound System =====
-const normalSounds = [
-  "sounds/mario-coin.mp3",
-  "sounds/roblox-oof.mp3",
-  "sounds/windows-error.mp3",
-  "sounds/discord-ping.mp3",
-  "sounds/iphone-ping.mp3",
-  "sounds/cash.mp3",
-  "sounds/nice.mp3",
-  "sounds/laugh.mp3",
-  "sounds/amongus.mp3",
-  "sounds/minecraft.mp3"
-];
-
-const legendarySound = "sounds/legendary.mp3";
-let lastSoundTime = 0;
-
-function playScanSound() {
-  const now = Date.now();
-  if (now - lastSoundTime < 250) return;
-  lastSoundTime = now;
-
-  try {
-    let audio;
-    if (Math.random() < 0.01) {
-      audio = new Audio(legendarySound);
-      showLegendaryPopup();
-    } else {
-      const i = Math.floor(Math.random() * normalSounds.length);
-      audio = new Audio(normalSounds[i]);
-    }
-    audio.volume = 1;
-    audio.play().catch(() => {});
-  } catch (err) {
-    console.error("Sound error:", err);
-  }
-}
-
-function showLegendaryPopup() {
-  const div = document.createElement("div");
-  div.innerText = "🔥 LEGENDARY!";
-  div.style.position = "fixed";
-  div.style.top = "40%";
-  div.style.left = "50%";
-  div.style.transform = "translate(-50%, -50%)";
-  div.style.fontSize = "50px";
-  div.style.color = "gold";
-  div.style.fontWeight = "bold";
-  div.style.zIndex = "9999";
-  div.style.textShadow = "0 0 10px black";
-  document.body.appendChild(div);
-  setTimeout(() => div.remove(), 1000);
-}
-
-</script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
