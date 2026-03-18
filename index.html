@@ -756,7 +756,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function resetAllData() { if (confirm('⚠️ Delete ALL data?') && confirm('Are you sure?')) { students = []; transactions = []; classes = ['Year 7 GP', 'Year 8 GP', 'Year 9 GP']; touchData(); securityKey = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15); saveData(); alert('Reset complete'); loadDashboard(); } }
         function setBatchMode(m) { document.getElementById('batch-mode').value = m; updatePresets(); }
         function updatePresets() { let mode = document.getElementById('batch-mode').value, presets = mode === 'reward' ? ['Participation', 'Homework', 'Teamwork', 'Bonus'] : ['Rent', 'Tax', 'Late', 'Penalty']; document.getElementById('batch-presets').innerHTML = presets.map(p => `<button class="preset-btn" onclick="document.getElementById('batch-reason').value='${p}'">${p}</button>`).join(''); }
-        function startBatchSession() { let c = document.getElementById('batch-class').value, a = parseInt(document.getElementById('batch-amount').value), r = document.getElementById('batch-reason').value; if (!c || !a || !r) return alert('Fill all fields'); const mode = document.getElementById('batch-mode').value; if (mode === 'deduction' && a > 0) a = -a; if (mode === 'reward' && a < 0) a = Math.abs(a); currentSession = { active: true, mode: mode, amount: a, reason: r, classFilter: c, scannedStudents: [], totalAmount: 0 }; document.getElementById('batch-scan-area').style.display = 'block'; document.getElementById('fraud-warning').classList.remove('active'); startScanner('batch-qr-reader', onBatchScan); }
+        function startBatchSession() { let c = document.getElementById('batch-class').value, a = parseInt(document.getElementById('batch-amount').value), r = document.getElementById('batch-reason').value; if (!c || !a || !r) return alert('Fill all fields'); const mode = document.getElementById('batch-mode').value; if (mode === 'deduction' && a > 0) a = -a; if (mode === 'reward' && a < 0) a = Math.abs(a); currentSession = { active: true, mode: mode, amount: a, reason: r, classFilter: c, scannedStudents: [], totalAmount: 0, isSaving: false }; document.getElementById('batch-scan-area').style.display = 'block'; document.getElementById('fraud-warning').classList.remove('active'); startScanner('batch-qr-reader', onBatchScan); }
         function startScanner(el, cb) { 
   html5QrCode = new Html5Qrcode(el); 
   Html5Qrcode.getCameras().then(cameras => {
@@ -777,6 +777,10 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function stopScanning() { if (html5QrCode) { html5QrCode.stop().then(() => html5QrCode = null); } }
         function onBatchScan(qr) { let v = verifyQR(qr); if (!v.valid) { document.getElementById('fraud-warning').classList.add('active'); log('error', '🚫 FRAUD!'); if (navigator.vibrate) navigator.vibrate([200, 100, 200]); return; } document.getElementById('fraud-warning').classList.remove('active'); processBatch(v.studentId); }
         async function processBatch(id) { 
+            if (!currentSession.active || currentSession.isSaving) {
+                return;
+            }
+
             if (currentSession.scannedStudents.find(s => s.id === id) || batchProcessingIds.has(id)) { 
                 log('warning', '⚠️ Already scanned'); 
                 if (navigator.vibrate) navigator.vibrate(200); 
@@ -790,32 +794,50 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             batchProcessingIds.add(id);
 
             try {
-                const tx = await insertTransactionToSupabase(s.id, currentSession.amount, currentSession.reason);
-                s.balance += currentSession.amount; 
-                currentSession.scannedStudents.push(s); 
-                touchData(); 
-                currentSession.totalAmount += currentSession.amount; 
-                const localTx = { id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: currentSession.amount, reason: currentSession.reason, date: tx.created_at };
-                transactions.push(localTx); 
-                lastTransaction = { transaction: localTx, student: s }; 
-                saveData(); 
-                document.getElementById('session-count').textContent = currentSession.scannedStudents.length; 
-                document.getElementById('session-total').textContent = currentSession.totalAmount; 
-                log('success', '✓ ' + s.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + s.balance + ')'); 
-                document.getElementById('undo-bar').classList.add('active'); 
-                document.getElementById('undo-text').textContent = s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; 
-                playScanSound();
-                if (navigator.vibrate) navigator.vibrate(50); 
-                setTimeout(() => document.getElementById('undo-bar').classList.remove('active'), 5000); 
-            } catch (err) {
-                console.error('Batch transaction failed:', err);
-                alert(err.message || 'Could not save batch transaction');
+                currentSession.scannedStudents.push({ id: s.id, name: s.name, class: s.class });
+                currentSession.totalAmount += currentSession.amount;
+                touchData();
+                saveData();
+                document.getElementById('session-count').textContent = currentSession.scannedStudents.length;
+                document.getElementById('session-total').textContent = currentSession.totalAmount;
+                log('success', '✓ Queued: ' + s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount);
+                document.getElementById('undo-bar').classList.add('active');
+                document.getElementById('undo-text').textContent = s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount;
+                lastTransaction = { mode: 'batch-pending', studentId: s.id };
+                if (navigator.vibrate) navigator.vibrate(35);
+                setTimeout(() => {
+                    if (lastTransaction && lastTransaction.mode === 'batch-pending') {
+                        document.getElementById('undo-bar').classList.remove('active');
+                    }
+                }, 5000);
             } finally {
                 batchProcessingIds.delete(id);
             }
         }
         async function undoLastScan() { 
             if (!lastTransaction) return; 
+
+            if (lastTransaction.mode === 'batch-pending') {
+                const pendingId = lastTransaction.studentId;
+                const idx = currentSession.scannedStudents.findIndex(x => x.id === pendingId);
+                if (idx === -1) {
+                    lastTransaction = null;
+                    document.getElementById('undo-bar').classList.remove('active');
+                    return;
+                }
+
+                const [removed] = currentSession.scannedStudents.splice(idx, 1);
+                currentSession.totalAmount -= currentSession.amount;
+                touchData();
+                saveData();
+                document.getElementById('session-count').textContent = currentSession.scannedStudents.length;
+                document.getElementById('session-total').textContent = currentSession.totalAmount;
+                log('warning', '↩️ Removed from queue: ' + removed.name);
+                document.getElementById('undo-bar').classList.remove('active');
+                lastTransaction = null;
+                return;
+            }
+
             let { transaction: t, student: s } = lastTransaction; 
 
             const { error } = await supabaseClient.from('transactions').delete().eq('id', t.id);
@@ -834,8 +856,67 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             lastTransaction = null; 
         }
         function log(type, msg) { let l = document.getElementById('session-log'); if (l.children.length === 1 && l.children[0].textContent.includes('Scan')) l.innerHTML = ''; let d = document.createElement('div'); d.className = 'log-item'; d.innerHTML = '<span>' + msg + '</span>'; l.insertBefore(d, l.firstChild); }
-        function finishBatchSession() { stopScanning(); alert('Complete!\nStudents: ' + currentSession.scannedStudents.length + '\nTotal: ' + currentSession.totalAmount); cancelBatch(); }
-        function cancelBatchSession() { cancelBatch(); } function cancelBatch() { stopScanning(); currentSession = { active: false, scannedStudents: [], totalAmount: 0 }; batchProcessingIds.clear(); document.getElementById('batch-scan-area').style.display = 'none'; document.getElementById('session-count').textContent = '0'; document.getElementById('session-total').textContent = '0'; document.getElementById('session-log').innerHTML = '<div style="text-align:center;color:#999">Scan students...</div>'; document.getElementById('undo-bar').classList.remove('active'); document.getElementById('fraud-warning').classList.remove('active'); }
+        async function finishBatchSession() { 
+            if (!currentSession.active) return;
+            if (currentSession.isSaving) return;
+            if (!currentSession.scannedStudents.length) {
+                stopScanning();
+                alert('No students scanned in this session.');
+                return;
+            }
+
+            stopScanning();
+            currentSession.isSaving = true;
+            document.getElementById('undo-bar').classList.remove('active');
+
+            try {
+                const payload = currentSession.scannedStudents.map(s => ({
+                    student_id: s.id,
+                    amount: currentSession.amount,
+                    reason: currentSession.reason
+                }));
+
+                const { data, error } = await supabaseClient
+                    .from('transactions')
+                    .insert(payload)
+                    .select('id, student_id, amount, reason, created_at');
+
+                if (error) throw error;
+
+                const insertedByStudentId = new Map((data || []).map(tx => [tx.student_id, tx]));
+
+                currentSession.scannedStudents.forEach(queued => {
+                    const student = students.find(x => x.id === queued.id);
+                    if (!student) return;
+
+                    student.balance += currentSession.amount;
+                    const tx = insertedByStudentId.get(queued.id);
+                    transactions.push({
+                        id: tx ? tx.id : crypto.randomUUID(),
+                        studentId: queued.id,
+                        studentName: queued.name,
+                        className: queued.class,
+                        amount: currentSession.amount,
+                        reason: currentSession.reason,
+                        date: tx ? tx.created_at : new Date().toISOString()
+                    });
+                });
+
+                touchData();
+                saveData();
+                playScanSound();
+                if (navigator.vibrate) navigator.vibrate(50);
+                alert('Complete!
+Students: ' + currentSession.scannedStudents.length + '
+Total: ' + currentSession.totalAmount);
+                cancelBatch();
+            } catch (err) {
+                console.error('Batch finish failed:', err);
+                currentSession.isSaving = false;
+                alert(err.message || 'Could not finish batch session');
+            }
+        }
+        function cancelBatchSession() { cancelBatch(); } function cancelBatch() { stopScanning(); currentSession = { active: false, scannedStudents: [], totalAmount: 0, isSaving: false }; lastTransaction = null; batchProcessingIds.clear(); document.getElementById('batch-scan-area').style.display = 'none'; document.getElementById('session-count').textContent = '0'; document.getElementById('session-total').textContent = '0'; document.getElementById('session-log').innerHTML = '<div style="text-align:center;color:#999">Scan students...</div>'; document.getElementById('undo-bar').classList.remove('active'); document.getElementById('fraud-warning').classList.remove('active'); }
         function setQuickReason(r) { document.getElementById('quick-reason').value = r; }
         function startQuickScan() { document.getElementById('quick-scanner').style.display = 'block'; document.getElementById('quick-fraud-warning').classList.remove('active'); startScanner('quick-qr-reader', onQuickScan); }
         function stopQuickScan() { stopScanning(); document.getElementById('quick-scanner').style.display = 'none'; }
