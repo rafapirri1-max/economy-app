@@ -801,6 +801,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 document.getElementById('session-count').textContent = currentSession.scannedStudents.length;
                 document.getElementById('session-total').textContent = currentSession.totalAmount;
                 log('success', '✓ Queued: ' + s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount);
+                playScanSound();
                 document.getElementById('undo-bar').classList.add('active');
                 document.getElementById('undo-text').textContent = s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount;
                 lastTransaction = { mode: 'batch-pending', studentId: s.id };
@@ -904,7 +905,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
                 touchData();
                 saveData();
-                playScanSound();
                 if (navigator.vibrate) navigator.vibrate(50);
                 alert('Complete!\nStudents: ' + currentSession.scannedStudents.length + '\nTotal: ' + currentSession.totalAmount);
                 cancelBatch();
