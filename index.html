@@ -5,7 +5,62 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Classroom Economy System</title>
     <meta name="theme-color" content="#667eea">
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
+// ===== Meme Sound System =====
+const normalSounds = [
+  "sounds/mario-coin.mp3",
+  "sounds/roblox-oof.mp3",
+  "sounds/windows-error.mp3",
+  "sounds/discord-ping.mp3",
+  "sounds/iphone-ping.mp3",
+  "sounds/cash.mp3",
+  "sounds/nice.mp3",
+  "sounds/laugh.mp3",
+  "sounds/amongus.mp3",
+  "sounds/minecraft.mp3"
+];
+
+const legendarySound = "sounds/legendary.mp3";
+let lastSoundTime = 0;
+
+function playScanSound() {
+  const now = Date.now();
+  if (now - lastSoundTime < 250) return;
+  lastSoundTime = now;
+
+  try {
+    let audio;
+    if (Math.random() < 0.01) {
+      audio = new Audio(legendarySound);
+      showLegendaryPopup();
+    } else {
+      const i = Math.floor(Math.random() * normalSounds.length);
+      audio = new Audio(normalSounds[i]);
+    }
+    audio.volume = 1;
+    audio.play().catch(() => {});
+  } catch (err) {
+    console.error("Sound error:", err);
+  }
+}
+
+function showLegendaryPopup() {
+  const div = document.createElement("div");
+  div.innerText = "🔥 LEGENDARY!";
+  div.style.position = "fixed";
+  div.style.top = "40%";
+  div.style.left = "50%";
+  div.style.transform = "translate(-50%, -50%)";
+  div.style.fontSize = "50px";
+  div.style.color = "gold";
+  div.style.fontWeight = "bold";
+  div.style.zIndex = "9999";
+  div.style.textShadow = "0 0 10px black";
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 1000);
+}
+
+</script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -439,33 +494,14 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function recalculateBalancesFromTransactions() {
             const transactionTotals = new Map();
             transactions.forEach(t => {
-                if (!t) return;
-                const studentId = t.studentId || t.student_id;
-                if (!studentId) return;
+                if (!t || !t.studentId) return;
                 const amount = Number(t.amount) || 0;
-                transactionTotals.set(studentId, (transactionTotals.get(studentId) || 0) + amount);
+                transactionTotals.set(t.studentId, (transactionTotals.get(t.studentId) || 0) + amount);
             });
             students = students.map(s => ({
                 ...s,
                 balance: transactionTotals.get(s.id) || 0
             }));
-        }
-
-        function addTransactionToLocalState(txRow) {
-            if (!txRow) return null;
-            const student = students.find(s => s.id === txRow.student_id);
-            const localTx = {
-                id: txRow.id,
-                studentId: txRow.student_id,
-                studentName: student ? student.name : '',
-                className: student ? student.class : '',
-                amount: Number(txRow.amount) || 0,
-                reason: txRow.reason || '',
-                date: txRow.created_at || new Date().toISOString()
-            };
-            transactions.push(localTx);
-            recalculateBalancesFromTransactions();
-            return localTx;
         }
         function saveData() {
             try {
@@ -645,34 +681,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   });
 }
         function stopScanning() { if (html5QrCode) { html5QrCode.stop().then(() => html5QrCode = null); } }
-        function playScanSuccessSound() {
-            try {
-                const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                if (!AudioCtx) return;
-                if (!window.scanAudioContext) {
-                    window.scanAudioContext = new AudioCtx();
-                }
-                const ctx = window.scanAudioContext;
-                if (ctx.state === 'suspended') {
-                    ctx.resume();
-                }
-                const now = ctx.currentTime;
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(880, now);
-                osc.frequency.linearRampToValueAtTime(1320, now + 0.08);
-                gain.gain.setValueAtTime(0.0001, now);
-                gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
-                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(now);
-                osc.stop(now + 0.14);
-            } catch (err) {
-                console.log('Scan sound error:', err);
-            }
-        }
         function onBatchScan(qr) { let v = verifyQR(qr); if (!v.valid) { document.getElementById('fraud-warning').classList.add('active'); log('error', '🚫 FRAUD!'); if (navigator.vibrate) navigator.vibrate([200, 100, 200]); return; } document.getElementById('fraud-warning').classList.remove('active'); processBatch(v.studentId); }
         async function processBatch(id) { 
             if (currentSession.scannedStudents.find(s => s.id === id) || batchProcessingIds.has(id)) { 
@@ -689,20 +697,19 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             try {
                 const tx = await insertTransactionToSupabase(s.id, currentSession.amount, currentSession.reason);
-                const localTx = addTransactionToLocalState(tx);
-                const updatedStudent = students.find(x => x.id === id) || s;
-
-                currentSession.scannedStudents.push(updatedStudent); 
+                s.balance += currentSession.amount; 
+                currentSession.scannedStudents.push(s); 
                 touchData(); 
                 currentSession.totalAmount += currentSession.amount; 
-                lastTransaction = { transaction: localTx, student: updatedStudent }; 
+                const localTx = { id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: currentSession.amount, reason: currentSession.reason, date: tx.created_at };
+                transactions.push(localTx); 
+                lastTransaction = { transaction: localTx, student: s }; 
                 saveData(); 
                 document.getElementById('session-count').textContent = currentSession.scannedStudents.length; 
                 document.getElementById('session-total').textContent = currentSession.totalAmount; 
-                log('success', '✓ ' + updatedStudent.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + updatedStudent.balance + ')'); 
-                playScanSuccessSound();
+                log('success', '✓ ' + s.name + ': ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount + ' (Bal: ' + s.balance + ')'); 
                 document.getElementById('undo-bar').classList.add('active'); 
-                document.getElementById('undo-text').textContent = updatedStudent.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; 
+                document.getElementById('undo-text').textContent = s.name + ' ' + (currentSession.amount > 0 ? '+' : '') + currentSession.amount; 
                 if (navigator.vibrate) navigator.vibrate(50); 
                 setTimeout(() => document.getElementById('undo-bar').classList.remove('active'), 5000); 
             } catch (err) {
@@ -719,11 +726,11 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             const { error } = await supabaseClient.from('transactions').delete().eq('id', t.id);
             if (error) return alert(error.message);
 
+            s.balance -= t.amount; 
             currentSession.scannedStudents = currentSession.scannedStudents.filter(x => x.id !== s.id); 
             touchData(); 
             currentSession.totalAmount -= t.amount; 
             transactions = transactions.filter(x => x.id !== t.id); 
-            recalculateBalancesFromTransactions();
             saveData(); 
             document.getElementById('session-count').textContent = currentSession.scannedStudents.length; 
             document.getElementById('session-total').textContent = currentSession.totalAmount; 
@@ -749,21 +756,16 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             try {
                 const tx = await insertTransactionToSupabase(s.id, a, r);
-                addTransactionToLocalState(tx);
-                const updatedStudent = students.find(x => x.id === s.id) || s;
+                s.balance += a; 
                 touchData(); 
+                transactions.push({ id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: a, reason: r, date: tx.created_at }); 
                 saveData(); 
                 document.getElementById('quick-result').style.display = 'block'; 
-                document.getElementById('quick-avatar').textContent = updatedStudent.name.charAt(0); 
-                document.getElementById('quick-name').textContent = updatedStudent.name; 
-                document.getElementById('quick-class').textContent = updatedStudent.class; 
-                document.getElementById('quick-balance').textContent = updatedStudent.balance; 
-                document.getElementById('quick-confirmation').innerHTML = '<span style="color:' + (a > 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700">' + (a > 0 ? '+' : '') + a + ' ' + r + '</span><br><span style="font-size:14px;color:#666">Balance: ' + updatedStudent.balance + '</span>'; 
-                loadStudentList();
-                loadBalancesView();
-                loadLeaderboardView();
-                loadDashboard();
-                loadHistory();
+                document.getElementById('quick-avatar').textContent = s.name.charAt(0); 
+                document.getElementById('quick-name').textContent = s.name; 
+                document.getElementById('quick-class').textContent = s.class; 
+                document.getElementById('quick-balance').textContent = s.balance; 
+                document.getElementById('quick-confirmation').innerHTML = '<span style="color:' + (a > 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700">' + (a > 0 ? '+' : '') + a + ' ' + r + '</span><br><span style="font-size:14px;color:#666">Balance: ' + s.balance + '</span>'; 
                 if (navigator.vibrate) navigator.vibrate(50); 
             } catch (err) {
                 alert(err.message || 'Could not save transaction');
@@ -785,8 +787,9 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
             try {
                 const tx = await insertTransactionToSupabase(s.id, amount, reason);
-                addTransactionToLocalState(tx);
+                s.balance += amount; 
                 touchData(); 
+                transactions.push({ id: tx.id, studentId: s.id, studentName: s.name, className: s.class, amount: amount, reason: reason, date: tx.created_at }); 
                 saveData(); 
                 refreshStudentViews(id); 
             } catch (err) {
@@ -798,11 +801,8 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         async function deleteStudent(id) { 
             if (!confirm('Delete student?')) return;
 
-            const { error: txDeleteError } = await supabaseClient.from('transactions').delete().eq('student_id', id);
-            if (txDeleteError) return alert(txDeleteError.message);
-
-            const { error: studentDeleteError } = await supabaseClient.from('students').delete().eq('id', id);
-            if (studentDeleteError) return alert(studentDeleteError.message);
+            const { error } = await supabaseClient.from('students').delete().eq('id', id);
+            if (error) return alert(error.message);
 
             students = students.filter(s => s.id !== id); 
             transactions = transactions.filter(t => t.studentId !== id); 
@@ -891,13 +891,19 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                     id: insertedStudent.id,
                     name: insertedStudent.name,
                     class: insertedStudent.class_name,
-                    balance: 0
+                    balance: b
                 });
 
                 if (insertedTx) {
-                    addTransactionToLocalState(insertedTx);
-                } else {
-                    recalculateBalancesFromTransactions();
+                    transactions.push({
+                        id: insertedTx.id,
+                        studentId: insertedTx.student_id,
+                        studentName: insertedStudent.name,
+                        className: insertedStudent.class_name,
+                        amount: insertedTx.amount,
+                        reason: insertedTx.reason,
+                        date: insertedTx.created_at
+                    });
                 }
 
                 touchData();
