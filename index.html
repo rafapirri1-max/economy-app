@@ -446,63 +446,119 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             "sounds/minecraft.wav"
         ];
         const legendarySoundPath = "sounds/legendary.wav";
-        const preloadedNormalSounds = [];
-        let preloadedLegendarySound = null;
+        const SOUND_POOL_SIZE = 4;
+        const SOUND_MIN_GAP_MS = 120;
+        const soundPools = new Map();
+        let soundsUnlocked = false;
         let lastSoundTime = 0;
 
-        function preloadSounds() {
-            preloadedNormalSounds.length = 0;
-
-            normalSoundPaths.forEach(path => {
+        function createAudioPool(path, size = SOUND_POOL_SIZE) {
+            const items = [];
+            for (let i = 0; i < size; i++) {
                 const audio = new Audio(path);
                 audio.preload = "auto";
+                audio.playsInline = true;
+                audio.crossOrigin = "anonymous";
                 audio.load();
-                preloadedNormalSounds.push(audio);
+                items.push(audio);
+            }
+            return { path, items, nextIndex: 0 };
+        }
+
+        function preloadSounds() {
+            soundPools.clear();
+
+            normalSoundPaths.forEach(path => {
+                soundPools.set(path, createAudioPool(path));
             });
 
-            preloadedLegendarySound = new Audio(legendarySoundPath);
-            preloadedLegendarySound.preload = "auto";
-            preloadedLegendarySound.load();
+            soundPools.set(legendarySoundPath, createAudioPool(legendarySoundPath, 2));
+        }
+
+        function getNextAudioFromPool(path) {
+            const pool = soundPools.get(path);
+            if (!pool || !pool.items.length) return null;
+
+            const length = pool.items.length;
+            for (let step = 0; step < length; step++) {
+                const index = (pool.nextIndex + step) % length;
+                const audio = pool.items[index];
+                if (audio.paused || audio.ended) {
+                    pool.nextIndex = (index + 1) % length;
+                    return audio;
+                }
+            }
+
+            const audio = pool.items[pool.nextIndex];
+            pool.nextIndex = (pool.nextIndex + 1) % length;
+            try {
+                audio.pause();
+                audio.currentTime = 0;
+            } catch (err) {}
+            return audio;
         }
 
         function unlockSounds() {
+            if (soundsUnlocked) return;
+            soundsUnlocked = true;
+
             try {
-                [...preloadedNormalSounds, preloadedLegendarySound].filter(Boolean).forEach(audio => {
-                    const clone = audio.cloneNode();
-                    clone.volume = 0;
-                    const p = clone.play();
-                    if (p && typeof p.then === "function") {
-                        p.then(() => {
-                            clone.pause();
-                            clone.currentTime = 0;
-                        }).catch(() => {});
-                    }
+                soundPools.forEach(pool => {
+                    pool.items.forEach(audio => {
+                        const originalVolume = audio.volume;
+                        audio.volume = 0;
+                        audio.currentTime = 0;
+                        const p = audio.play();
+                        if (p && typeof p.then === "function") {
+                            p.then(() => {
+                                audio.pause();
+                                audio.currentTime = 0;
+                                audio.volume = originalVolume;
+                            }).catch(() => {
+                                audio.volume = originalVolume;
+                            });
+                        } else {
+                            audio.pause();
+                            audio.currentTime = 0;
+                            audio.volume = originalVolume;
+                        }
+                    });
                 });
             } catch (err) {
                 console.error('Sound unlock error:', err);
             }
         }
 
+        function playSoundFromPath(path) {
+            const audio = getNextAudioFromPool(path);
+            if (!audio) return;
+
+            try {
+                audio.pause();
+                audio.currentTime = 0;
+            } catch (err) {}
+
+            audio.volume = 1;
+            const playPromise = audio.play();
+            if (playPromise && typeof playPromise.catch === "function") {
+                playPromise.catch(err => console.error('Sound play error:', err));
+            }
+        }
+
         function playScanSound() {
             const now = Date.now();
-            if (now - lastSoundTime < 250) return;
+            if (now - lastSoundTime < SOUND_MIN_GAP_MS) return;
             lastSoundTime = now;
 
             try {
-                let sourceAudio;
                 if (Math.random() < 0.01) {
-                    sourceAudio = preloadedLegendarySound;
                     showLegendaryPopup();
-                } else {
-                    const i = Math.floor(Math.random() * preloadedNormalSounds.length);
-                    sourceAudio = preloadedNormalSounds[i];
+                    playSoundFromPath(legendarySoundPath);
+                    return;
                 }
 
-                if (!sourceAudio) return;
-
-                const audio = sourceAudio.cloneNode();
-                audio.volume = 1;
-                audio.play().catch(err => console.error('Sound play error:', err));
+                const i = Math.floor(Math.random() * normalSoundPaths.length);
+                playSoundFromPath(normalSoundPaths[i]);
             } catch (err) {
                 console.error('Sound error:', err);
             }
