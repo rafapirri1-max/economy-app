@@ -73,6 +73,13 @@
         .medal-2 { background:#e5e7eb; }
         .medal-3 { background:#f4c7a1; }
         .muted-text { color:#777; font-size:12px; }
+        .header-status { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .cloud-status-badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+        .cloud-status-connecting { background: #f39c12; color: white; }
+        .cloud-status-connected { background: #27ae60; color: white; }
+        .cloud-status-failed { background: #e74c3c; color: white; }
+        .cloud-status-cached { background: #95a5a6; color: white; }
+        .cloud-load-warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 12px 16px; border-radius: 12px; margin-bottom: 20px; font-size: 14px; display: none; }
         @media (max-width: 768px) { .container { padding: 10px; } .card { padding: 16px; } .grid-2 { grid-template-columns: 1fr; } }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -81,8 +88,12 @@
     <div class="container">
         <div class="header">
             <div class="logo">💰 Classroom Economy</div>
-            <div class="security-badge">🔒 SECURE</div>
+            <div class="header-status">
+                <span id="cloud-status-badge" class="cloud-status-badge cloud-status-cached">Offline / using cached data</span>
+                <div class="security-badge">🔒 SECURE</div>
+            </div>
         </div>
+        <div id="cloud-load-warning" class="cloud-load-warning" role="alert"></div>
         <div class="nav-tabs">
             <button class="nav-tab active" onclick="showScreen('dashboard', this)">📊 Dashboard</button>
             <button class="nav-tab" onclick="showScreen('batch', this)">⚡ Batch</button>
@@ -335,7 +346,13 @@
                 <div class="security-info">
                     <strong>Status:</strong> <span id="sync-status">Not configured</span>
                 </div>
-                <div class="form-group">
+                <div class="security-info" style="margin-top:12px">
+                    <strong>Supabase cloud:</strong> <span id="cloud-connection-detail">—</span><br>
+                    <strong>Last cloud load:</strong> <span id="cloud-last-loaded">Never</span>
+                </div>
+                <button class="btn btn-secondary" id="reload-cloud-btn" type="button" onclick="reloadCloudData()" style="margin-top:12px">🔄 Reload Cloud Data</button>
+                <p id="cloud-reload-feedback" class="muted-text" style="margin-top:8px"></p>
+                <div class="form-group" style="margin-top:20px">
                     <label>GitHub Token</label>
                     <input type="password" id="github-token" placeholder="ghp_xxxxxxxxxxxx">
                     <small style="color:#666;font-size:12px">Create at github.com/settings/tokens (Gist scope only)</small>
@@ -606,74 +623,172 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 localStorage.setItem('appMeta', JSON.stringify(appMeta));
             } catch (e) {}
         }
-        async function loadFromSupabase() {
-    try {
-        const { data: classRows, error: classError } = await supabaseClient
-            .from('classes')
-            .select('name')
-            .order('name');
+        let cloudConnectionState = 'cached';
+        let lastCloudLoadAt = null;
+        let lastCloudLoadError = null;
 
-        if (classError) {
-            console.log('Classes load error:', classError);
-            return;
+        function hasCachedEconomyData() {
+            try {
+                return !!(localStorage.getItem('students') || localStorage.getItem('transactions') || localStorage.getItem('classes'));
+            } catch (e) {
+                return false;
+            }
         }
 
-        const { data: studentRows, error: studentError } = await supabaseClient
-            .from('students')
-            .select('id, name, class_name')
-            .order('name');
-
-        if (studentError) {
-            console.log('Students load error:', studentError);
-            return;
+        function formatCloudLoadErrors(errors) {
+            return errors.map(e => e.table + ': ' + formatSupabaseError(e.error)).join(' | ');
         }
 
-        const { data: txRows, error: txError } = await supabaseClient
-            .from('transactions')
-            .select('id, student_id, amount, reason, created_at')
-            .order('created_at', { ascending: true });
-
-        if (txError) {
-            console.log('Transactions load error:', txError);
-            return;
-        }
-
-        classes = (classRows || []).map(c => c.name);
-
-        students = (studentRows || []).map(s => ({
-            id: s.id,
-            name: s.name,
-            class: s.class_name,
-            balance: 0
-        }));
-
-        transactions = (txRows || []).map(t => {
-            const student = students.find(s => s.id === t.student_id);
-            return {
-                id: t.id,
-                studentId: t.student_id,
-                studentName: student ? student.name : '',
-                className: student ? student.class : '',
-                amount: t.amount,
-                reason: t.reason,
-                date: t.created_at
+        function updateCloudConnectionUI() {
+            const badge = document.getElementById('cloud-status-badge');
+            const labels = {
+                connecting: 'Connecting…',
+                connected: 'Cloud connected',
+                failed: 'Cloud connection failed',
+                cached: 'Offline / using cached data'
             };
-        });
+            if (badge) {
+                badge.textContent = labels[cloudConnectionState] || labels.cached;
+                badge.className = 'cloud-status-badge cloud-status-' + cloudConnectionState;
+            }
+            const warn = document.getElementById('cloud-load-warning');
+            if (warn) {
+                if (lastCloudLoadError) {
+                    warn.style.display = 'block';
+                    warn.textContent = 'Cloud load failed — showing cached local data if available. ' + lastCloudLoadError;
+                } else if (cloudConnectionState === 'cached' && hasCachedEconomyData()) {
+                    warn.style.display = 'block';
+                    warn.textContent = 'Using cached local data. Cloud connection has not been verified yet.';
+                } else {
+                    warn.style.display = 'none';
+                    warn.textContent = '';
+                }
+            }
+            const detail = document.getElementById('cloud-connection-detail');
+            if (detail) detail.textContent = labels[cloudConnectionState] || labels.cached;
+            const lastLoaded = document.getElementById('cloud-last-loaded');
+            if (lastLoaded) lastLoaded.textContent = lastCloudLoadAt ? fmtDate(lastCloudLoadAt) : 'Never';
+        }
 
-        recalculateBalancesFromTransactions();
+        function refreshEconomyViewsFromState() {
+            loadClasses();
+            loadDashboard();
+            loadBalancesView();
+            loadLeaderboardView();
+            loadStudentList();
+            loadHistory();
+        }
 
-        loadClasses();
-        loadDashboard();
-        loadBalancesView();
-        loadLeaderboardView();
-        loadStudentList();
-        loadHistory();
+        async function loadFromSupabase(options = {}) {
+            cloudConnectionState = 'connecting';
+            updateCloudConnectionUI();
 
-        console.log('Loaded from Supabase');
-    } catch (err) {
-        console.log('Supabase load failed:', err);
-    }
-}
+            try {
+                const [classResult, studentResult, txResult] = await Promise.all([
+                    supabaseClient.from('classes').select('name').order('name'),
+                    supabaseClient.from('students').select('id, name, class_name').order('name'),
+                    supabaseClient.from('transactions').select('id, student_id, amount, reason, created_at').order('created_at', { ascending: true })
+                ]);
+
+                const errors = [];
+                if (classResult.error) errors.push({ table: 'classes', error: classResult.error });
+                if (studentResult.error) errors.push({ table: 'students', error: studentResult.error });
+                if (txResult.error) errors.push({ table: 'transactions', error: txResult.error });
+
+                if (errors.length > 0) {
+                    errors.forEach(({ table, error }) => {
+                        console.error('Supabase ' + table + ' load error:', error);
+                    });
+                    lastCloudLoadError = formatCloudLoadErrors(errors);
+                    cloudConnectionState = hasCachedEconomyData() ? 'cached' : 'failed';
+                    updateCloudConnectionUI();
+                    return { success: false, errors };
+                }
+
+                const classRows = classResult.data;
+                const studentRows = studentResult.data;
+                const txRows = txResult.data;
+
+                classes = (classRows || []).map(c => c.name);
+
+                students = (studentRows || []).map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    class: s.class_name,
+                    balance: 0
+                }));
+
+                transactions = (txRows || []).map(t => {
+                    const student = students.find(s => s.id === t.student_id);
+                    return {
+                        id: t.id,
+                        studentId: t.student_id,
+                        studentName: student ? student.name : '',
+                        className: student ? student.class : '',
+                        amount: t.amount,
+                        reason: t.reason,
+                        date: t.created_at
+                    };
+                });
+
+                recalculateBalancesFromTransactions();
+                saveData();
+                refreshEconomyViewsFromState();
+
+                const classCount = classes.length;
+                const studentCount = students.length;
+                const transactionCount = transactions.length;
+                console.log(
+                    'Cloud load successful:\n- ' + classCount + ' classes\n- ' + studentCount + ' students\n- ' + transactionCount + ' transactions'
+                );
+
+                cloudConnectionState = 'connected';
+                lastCloudLoadAt = new Date().toISOString();
+                lastCloudLoadError = null;
+                updateCloudConnectionUI();
+
+                return {
+                    success: true,
+                    counts: { classes: classCount, students: studentCount, transactions: transactionCount }
+                };
+            } catch (err) {
+                console.error('Supabase load failed:', err);
+                lastCloudLoadError = err && err.message ? err.message : String(err);
+                cloudConnectionState = hasCachedEconomyData() ? 'cached' : 'failed';
+                updateCloudConnectionUI();
+                return { success: false, errors: [{ table: 'unknown', error: err }] };
+            }
+        }
+
+        async function reloadCloudData() {
+            const btn = document.getElementById('reload-cloud-btn');
+            const feedback = document.getElementById('cloud-reload-feedback');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Reloading…';
+            }
+            if (feedback) feedback.textContent = '';
+            logSync('☁️ Reloading cloud data…');
+
+            const result = await loadFromSupabase({ source: 'manual' });
+
+            if (result.success) {
+                const c = result.counts;
+                const msg = 'Cloud reload OK: ' + c.classes + ' classes, ' + c.students + ' students, ' + c.transactions + ' transactions';
+                logSync('✅ ' + msg);
+                if (feedback) feedback.textContent = msg;
+            } else {
+                const detail = lastCloudLoadError || 'Unknown error';
+                const msg = 'Cloud reload failed. Cached local data kept if available.';
+                logSync('❌ ' + msg + ' ' + detail);
+                if (feedback) feedback.textContent = msg;
+            }
+
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🔄 Reload Cloud Data';
+            }
+        }
 
         async function insertTransactionToSupabase(studentId, amount, reason) {
             const { data, error } = await supabaseClient
@@ -1251,6 +1366,7 @@ function updateSyncStatus() {
         document.getElementById('github-token').value = '';
         document.getElementById('gist-id').value = gistId;
         updateLocalMetaUI();
+        updateCloudConnectionUI();
         return;
     }
 
@@ -1264,6 +1380,7 @@ function updateSyncStatus() {
     document.getElementById('github-token').value = '';
     document.getElementById('github-token').placeholder = 'Token saved locally — paste a new one only if you want to replace it';
     updateLocalMetaUI();
+    updateCloudConnectionUI();
 }
 
 async function fetchRemoteData() {
@@ -1447,6 +1564,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     document.addEventListener('click', unlockOnce, { once: true });
     document.addEventListener('touchstart', unlockOnce, { once: true });
+
+    cloudConnectionState = hasCachedEconomyData() ? 'cached' : 'connecting';
+    updateCloudConnectionUI();
 
     await loadFromSupabase();
     subscribeToRealtime();
