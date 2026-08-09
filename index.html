@@ -51,7 +51,11 @@
         .preset-reasons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
         .preset-btn { background: #e3f2fd; border: 1px solid #90caf9; color: #1976d2; padding: 8px 16px; border-radius: 20px; font-size: 14px; cursor: pointer; border: none; }
         .class-tag { display: inline-flex; align-items: center; gap: 8px; background: #e3f2fd; padding: 12px 20px; border-radius: 25px; margin: 5px; font-size: 16px; font-weight: 600; }
-        .class-tag button { background: #e74c3c; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 16px; }
+        .class-tag.selected { background: #667eea; color: white; }
+        .class-tag-label { cursor: pointer; }
+        .class-tag-label:hover { text-decoration: underline; }
+        .class-tag button { background: #e74c3c; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 16px; flex-shrink: 0; }
+        .class-tag.selected button { background: #c0392b; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 20px; }
         .modal.active { display: flex; }
         .modal-content { background: white; padding: 24px; border-radius: 20px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
@@ -318,8 +322,19 @@
                 </div>
                 <div style="margin-top: 20px;">
                     <label>Your Classes:</label>
+                    <p class="muted-text" style="margin-top:6px">Tap a class to view students and adjust balances.</p>
                     <div id="classes-list" style="margin-top: 10px;"></div>
                 </div>
+            </div>
+            <div id="class-detail-panel" class="card" style="display: none; margin-top: 0;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+                    <div>
+                        <div class="card-title" id="class-detail-title" style="margin-bottom:4px">Class</div>
+                        <p class="muted-text" id="class-detail-meta"></p>
+                    </div>
+                    <button class="btn btn-secondary" type="button" onclick="hideClassDetail()" style="width:auto; margin:0; padding:10px 16px;">✕ Close</button>
+                </div>
+                <div id="class-students-list" style="margin-top: 16px;"></div>
             </div>
         </div>
         <div id="security" class="screen">
@@ -461,6 +476,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         if (classes.length === 0) { classes = ['Year 7 GP', 'Year 8 GP', 'Year 9 GP']; }
         let currentSession = { active: false, scannedStudents: [], totalAmount: 0 }, lastTransaction = null, html5QrCode = null;
         let batchProcessingIds = new Set();
+        let selectedClassName = null;
 
         const normalSoundPaths = [
             "sounds/mario-coin.wav",
@@ -833,7 +849,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function generateSignature(id) { let s = 0, d = id + securityKey; for (let i = 0; i < d.length; i++) { s = ((s << 5) - s) + d.charCodeAt(i); s = s & s; } return Math.abs(s).toString(16).toUpperCase().padStart(8, '0'); }
         function verifyQR(qr) { try { let p = qr.split('|'); if (p.length !== 2) return { valid: false }; return { valid: generateSignature(p[0]) === p[1], studentId: p[0] }; } catch (e) { return { valid: false }; } }
         function secureQR(id) { return id + '|' + generateSignature(id); }
-        function loadClasses() {
+        function loadClasses(skipClassDetailRefresh) {
             let opts = '<option value="">Select Class</option>' + classes.map(c => `<option value="${c}">${c}</option>`).join('');
             document.getElementById('batch-class').innerHTML = opts;
             document.getElementById('new-student-class').innerHTML = opts;
@@ -845,7 +861,62 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 else if (classes.length) batchPrintSel.value = classes[0];
             }
             let list = document.getElementById('classes-list');
-            list.innerHTML = classes.length ? classes.map(c => `<div class="class-tag">${c}<button onclick="deleteClass('${c}')">×</button></div>`).join('') : '<p style="color:#999">No classes yet.</p>';
+            list.innerHTML = classes.length ? classes.map(c => {
+                const selected = selectedClassName === c ? ' selected' : '';
+                const safeClass = escapeHtml(c);
+                const safeId = c.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                return `<div class="class-tag${selected}"><span class="class-tag-label" onclick="showClassStudents('${safeId}')">${safeClass}</span><button type="button" aria-label="Delete class" onclick="deleteClass('${safeId}')">×</button></div>`;
+            }).join('') : '<p style="color:#999">No classes yet.</p>';
+            if (!skipClassDetailRefresh) refreshClassDetailIfVisible();
+        }
+        function showClassStudents(className) {
+            selectedClassName = className;
+            const panel = document.getElementById('class-detail-panel');
+            const title = document.getElementById('class-detail-title');
+            const meta = document.getElementById('class-detail-meta');
+            const list = document.getElementById('class-students-list');
+            if (!panel || !title || !meta || !list) return;
+
+            const classStudents = students.filter(s => s.class === className).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+            panel.style.display = 'block';
+            title.textContent = '🏫 ' + className;
+            meta.textContent = classStudents.length + ' student(s) — tap a student to adjust balance, print QR, or view history';
+
+            if (!classStudents.length) {
+                list.innerHTML = '<div class="empty-state">No students in this class yet. Add students from the Students tab.</div>';
+            } else {
+                list.innerHTML = classStudents.map(s => {
+                    const safeId = s.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    return `<div class="student-card" onclick="openStudentDetailModal('${safeId}')"><div class="student-avatar">${escapeHtml(s.name.charAt(0))}</div><div><h4>${escapeHtml(s.name)}</h4><p>${escapeHtml(s.id)}</p></div><div class="balance-badge">${s.balance}</div></div>`;
+                }).join('');
+            }
+
+            loadClasses(true);
+            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        function hideClassDetail() {
+            selectedClassName = null;
+            const panel = document.getElementById('class-detail-panel');
+            if (panel) panel.style.display = 'none';
+            loadClasses();
+        }
+        function refreshClassDetailIfVisible() {
+            if (!selectedClassName) return;
+            const panel = document.getElementById('class-detail-panel');
+            if (!panel || panel.style.display === 'none') return;
+            const classStudents = students.filter(s => s.class === selectedClassName).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+            const meta = document.getElementById('class-detail-meta');
+            const list = document.getElementById('class-students-list');
+            if (meta) meta.textContent = classStudents.length + ' student(s) — tap a student to adjust balance, print QR, or view history';
+            if (!list) return;
+            if (!classStudents.length) {
+                list.innerHTML = '<div class="empty-state">No students in this class yet. Add students from the Students tab.</div>';
+            } else {
+                list.innerHTML = classStudents.map(s => {
+                    const safeId = s.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    return `<div class="student-card" onclick="openStudentDetailModal('${safeId}')"><div class="student-avatar">${escapeHtml(s.name.charAt(0))}</div><div><h4>${escapeHtml(s.name)}</h4><p>${escapeHtml(s.id)}</p></div><div class="balance-badge">${s.balance}</div></div>`;
+                }).join('');
+            }
         }
         async function addClass() { 
             let n = document.getElementById('new-class-name').value.trim(); 
@@ -871,6 +942,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             await loadFromSupabase();
             touchData(); 
             saveData(); 
+            hideClassDetail();
         }
         function showScreen(id, el = null) {
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -882,7 +954,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             if (id === 'balances') loadBalancesView();
             if (id === 'leaderboard') loadLeaderboardView();
             if (id === 'history') loadHistory();
-            if (id === 'classes') loadClasses();
+            if (id === 'classes') { loadClasses(); if (selectedClassName) refreshClassDetailIfVisible(); }
             if (id === 'security') document.getElementById('current-key').textContent = securityKey.substring(0, 8) + '...' + securityKey.substring(securityKey.length - 8);
             if (id === 'sync') updateSyncStatus();
         }
@@ -1092,7 +1164,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function stopLookupScan() { stopScanning(); document.getElementById('lookup-scanner').style.display = 'none'; }
         function renderStudentDetailHTML(id) { let s = students.find(x => x.id === id); if (!s) return '<p style="color:#999">Student not found</p>'; let t = transactions.filter(x => x.studentId === id).slice().reverse(), sec = secureQR(id); return `<div class="student-card"><div class="student-avatar">${s.name.charAt(0)}</div><div><h4>${s.name}</h4><p>${s.id} • ${s.class}</p></div><div class="balance-badge">${s.balance}</div></div><div class="qr-card"><div class="qr-card-header">Official Card</div><div class="qr-card-subtitle">${s.class}</div><div class="qr-display-area"><div id="qrcode-${s.id}-detail" class="qr-code-container"></div><div class="security-hash">Hash: ${sec.split('|')[1]}</div></div></div><div class="grid-2"><button class="btn btn-success" onclick="printCard('${s.id}')">🖨️ Print</button><button class="btn btn-danger" onclick="deleteStudent('${s.id}')">🗑️ Delete</button></div><div class="card" style="padding:16px; margin-top:12px; background:#f8f9fa;"><div class="card-title" style="font-size:16px; margin-bottom:12px;">Adjust Balance</div><div class="preset-reasons" style="margin-bottom:10px"><button class="preset-btn" onclick="quickAdjustStudent('${s.id}', 1, 'Manual bonus')">+1</button><button class="preset-btn" onclick="quickAdjustStudent('${s.id}', 2, 'Manual bonus')">+2</button><button class="preset-btn" onclick="quickAdjustStudent('${s.id}', 5, 'Manual bonus')">+5</button><button class="preset-btn" onclick="quickAdjustStudent('${s.id}', -1, 'Manual deduction')">-1</button><button class="preset-btn" onclick="quickAdjustStudent('${s.id}', -2, 'Manual deduction')">-2</button><button class="preset-btn" onclick="quickAdjustStudent('${s.id}', -5, 'Manual deduction')">-5</button></div><div class="grid-2"><div class="form-group" style="margin-bottom:10px"><label>Custom Amount</label><input type="number" id="detail-amount-${s.id}" placeholder="e.g. 5"></div><div class="form-group" style="margin-bottom:10px"><label>Reason</label><input type="text" id="detail-reason-${s.id}" placeholder="Store purchase, bonus..."></div></div><div class="grid-2"><button class="btn btn-success" onclick="manualAdjustStudent('${s.id}', 'add')">Add coins</button><button class="btn btn-danger" onclick="manualAdjustStudent('${s.id}', 'deduct')">Deduct coins</button></div></div><h4 style="margin-top:20px">Transactions:</h4>` + (t.map(x => `<div class="transaction-item"><span>${x.reason}</span><span class="${x.amount > 0 ? 'positive' : 'negative'}">${x.amount > 0 ? '+' : ''}${x.amount}</span></div>`).join('') || '<p style="color:#999">None</p>'); }
         function renderStudentQR(id, targetId) { const target=document.getElementById(targetId); if (!target) return; target.innerHTML=''; const sec=secureQR(id); new QRCode(target, { text: sec, width: 200, height: 200, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H }); }
-        function refreshStudentViews(id) { loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); loadHistory(); const studentsScreenActive = document.getElementById('students').classList.contains('active'); if (studentsScreenActive && document.getElementById('student-detail').style.display !== 'none') showStudentDetail(id); if (document.getElementById('student-detail-modal').classList.contains('active')) openStudentDetailModal(id); }
+        function refreshStudentViews(id) { loadStudentList(); loadBalancesView(); loadLeaderboardView(); loadDashboard(); loadHistory(); refreshClassDetailIfVisible(); const studentsScreenActive = document.getElementById('students').classList.contains('active'); if (studentsScreenActive && document.getElementById('student-detail').style.display !== 'none') showStudentDetail(id); if (document.getElementById('student-detail-modal').classList.contains('active')) openStudentDetailModal(id); }
         function showStudentDetail(id) { let s = students.find(x => x.id === id); if (!s) return alert('Not found'); document.getElementById('student-detail').style.display = 'block'; document.getElementById('detail-content').innerHTML = renderStudentDetailHTML(id); setTimeout(() => renderStudentQR(id, 'qrcode-' + s.id + '-detail'), 100); document.getElementById('student-detail').scrollIntoView({ behavior: 'smooth' }); }
         function openStudentDetailModal(id) { let s = students.find(x => x.id === id); if (!s) return alert('Not found'); document.getElementById('student-detail-modal').classList.add('active'); document.getElementById('student-detail-modal-content').innerHTML = renderStudentDetailHTML(id); setTimeout(() => renderStudentQR(id, 'qrcode-' + s.id + '-detail'), 100); }
         function closeStudentDetailModal() { document.getElementById('student-detail-modal').classList.remove('active'); }
