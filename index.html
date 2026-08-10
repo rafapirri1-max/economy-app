@@ -334,7 +334,16 @@
                     </div>
                     <button class="btn btn-secondary" type="button" onclick="hideClassDetail()" style="width:auto; margin:0; padding:10px 16px;">✕ Close</button>
                 </div>
+                <div id="class-detail-actions" style="margin-top: 12px;"></div>
                 <div id="class-students-list" style="margin-top: 16px;"></div>
+            </div>
+            <div class="card" style="margin-top: 0;">
+                <div class="card-title">📦 Archived Classes</div>
+                <p class="muted-text">Archived classes are removed from active lists. Export a JSON snapshot anytime.</p>
+                <p class="muted-text" id="archived-classes-hint" style="margin-top:6px"></p>
+                <div id="archived-classes-list" style="margin-top: 12px;">
+                    <p class="muted-text">Loading archives…</p>
+                </div>
             </div>
         </div>
         <div id="security" class="screen">
@@ -477,6 +486,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         let currentSession = { active: false, scannedStudents: [], totalAmount: 0 }, lastTransaction = null, html5QrCode = null;
         let batchProcessingIds = new Set();
         let selectedClassName = null;
+        let archivedClassesCache = [];
 
         const normalSoundPaths = [
             "sounds/mario-coin.wav",
@@ -869,30 +879,38 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             }).join('') : '<p style="color:#999">No classes yet.</p>';
             if (!skipClassDetailRefresh) refreshClassDetailIfVisible();
         }
-        function showClassStudents(className) {
-            selectedClassName = className;
+        function updateClassDetailPanel(className) {
             const panel = document.getElementById('class-detail-panel');
             const title = document.getElementById('class-detail-title');
             const meta = document.getElementById('class-detail-meta');
+            const actions = document.getElementById('class-detail-actions');
             const list = document.getElementById('class-students-list');
             if (!panel || !title || !meta || !list) return;
 
             const classStudents = students.filter(s => s.class === className).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+            const studentIds = classStudents.map(s => s.id);
+            const transactionCount = transactions.filter(t => studentIds.includes(t.studentId)).length;
+
             panel.style.display = 'block';
             title.textContent = '🏫 ' + className;
             meta.textContent = classStudents.length + ' student(s) — tap a student to adjust balance, print QR, or view history';
+            if (actions) actions.innerHTML = getClassDetailActionsHtml(className, classStudents.length, transactionCount);
 
             if (!classStudents.length) {
-                list.innerHTML = '<div class="empty-state">No students in this class yet. Add students from the Students tab.</div>';
+                list.innerHTML = '<div class="empty-state">No students in this class yet. You can still archive this empty class.</div>';
             } else {
                 list.innerHTML = classStudents.map(s => {
                     const safeId = s.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                     return `<div class="student-card" onclick="openStudentDetailModal('${safeId}')"><div class="student-avatar">${escapeHtml(s.name.charAt(0))}</div><div><h4>${escapeHtml(s.name)}</h4><p>${escapeHtml(s.id)}</p></div><div class="balance-badge">${s.balance}</div></div>`;
                 }).join('');
             }
-
+        }
+        function showClassStudents(className) {
+            selectedClassName = className;
+            updateClassDetailPanel(className);
             loadClasses(true);
-            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const panel = document.getElementById('class-detail-panel');
+            if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         function hideClassDetail() {
             selectedClassName = null;
@@ -900,23 +918,179 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             if (panel) panel.style.display = 'none';
             loadClasses();
         }
+        function getClassDetailActionsHtml(className, studentCount, transactionCount) {
+            const safeClass = className.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return '<button class="btn btn-warning" type="button" onclick="archiveClass(\'' + safeClass + '\')">📦 Archive this class</button>' +
+                '<p class="muted-text" style="margin-top:8px">Saves ' + studentCount + ' student(s) and ' + transactionCount + ' transaction(s) with balances, then removes them from active lists.</p>';
+        }
+        function readLocalClassArchives() {
+            try {
+                return JSON.parse(localStorage.getItem('classArchives') || '[]');
+            } catch (e) {
+                return [];
+            }
+        }
+        function saveArchiveToLocalStorage(snapshot, cloudId) {
+            const archives = readLocalClassArchives();
+            archives.push({
+                id: cloudId || 'local-' + Date.now(),
+                class_name: snapshot.className,
+                archived_at: snapshot.archivedAt,
+                student_count: snapshot.students.length,
+                transaction_count: snapshot.transactions.length,
+                snapshot
+            });
+            localStorage.setItem('classArchives', JSON.stringify(archives));
+        }
+        async function loadArchivedClassesList() {
+            const el = document.getElementById('archived-classes-list');
+            const hint = document.getElementById('archived-classes-hint');
+            if (!el) return;
+
+            let cloudArchives = [];
+            let cloudError = null;
+            const { data, error } = await supabaseClient
+                .from('class_archives')
+                .select('id, class_name, archived_at, student_count, transaction_count')
+                .order('archived_at', { ascending: false });
+
+            if (error) {
+                cloudError = error;
+                console.error('class_archives load error:', error);
+            } else {
+                cloudArchives = data || [];
+            }
+
+            const localArchives = readLocalClassArchives();
+            archivedClassesCache = cloudArchives.slice();
+            localArchives.forEach(localArchive => {
+                if (!archivedClassesCache.some(a => a.id === localArchive.id)) archivedClassesCache.push(localArchive);
+            });
+
+            if (hint) {
+                if (cloudError && (cloudError.code === 'PGRST205' || (cloudError.message || '').includes('class_archives'))) {
+                    hint.textContent = 'Cloud archive table not found. Run supabase/class_archives.sql in Supabase once. Local device copies are still listed below.';
+                } else if (cloudError) {
+                    hint.textContent = 'Could not load cloud archives: ' + formatSupabaseError(cloudError);
+                } else {
+                    hint.textContent = '';
+                }
+            }
+
+            if (!archivedClassesCache.length) {
+                el.innerHTML = '<p class="muted-text">No archived classes yet.</p>';
+                return;
+            }
+
+            el.innerHTML = archivedClassesCache.map(a => {
+                const safeId = String(a.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const label = a.class_name || a.className || 'Class';
+                const when = a.archived_at || a.archivedAt;
+                return '<div class="balance-row"><div><strong>' + escapeHtml(label) + '</strong><div class="muted-text">' +
+                    fmtDate(when) + ' · ' + (a.student_count || 0) + ' students · ' + (a.transaction_count || 0) + ' transactions</div></div>' +
+                    '<button class="btn btn-secondary" type="button" style="width:auto;margin:0;padding:8px 12px" onclick="exportArchivedClass(\'' + safeId + '\')">📥 Export</button></div>';
+            }).join('');
+        }
+        async function exportArchivedClass(archiveId) {
+            let archive = archivedClassesCache.find(a => String(a.id) === String(archiveId));
+            if (!archive || !archive.snapshot) {
+                const { data, error } = await supabaseClient
+                    .from('class_archives')
+                    .select('id, class_name, archived_at, student_count, transaction_count, snapshot')
+                    .eq('id', archiveId)
+                    .maybeSingle();
+                if (!error && data) archive = data;
+            }
+            if (!archive || !archive.snapshot) {
+                archive = readLocalClassArchives().find(a => String(a.id) === String(archiveId));
+            }
+            if (!archive) return alert('Archive not found.');
+
+            const payload = archive.snapshot;
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            const label = (archive.class_name || archive.className || 'class').replace(/[^\w-]+/g, '-');
+            const datePart = (archive.archived_at || archive.archivedAt || '').slice(0, 10);
+            a.href = URL.createObjectURL(blob);
+            a.download = 'archive-' + label + '-' + datePart + '.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+        async function archiveClass(className) {
+            const classStudents = students.filter(s => s.class === className).sort((a, b) => a.name.localeCompare(b.name));
+            const studentIds = classStudents.map(s => s.id);
+            const classTransactions = transactions.filter(t => studentIds.includes(t.studentId));
+
+            const summary = classStudents.length
+                ? 'Archive "' + className + '" with ' + classStudents.length + ' student(s) and ' + classTransactions.length + ' transaction(s)?'
+                : 'Archive empty class "' + className + '"?';
+
+            if (!confirm(summary + '\n\nThis saves a full snapshot (students, balances, transactions) and removes the class from your active workspace.')) return;
+            if (!confirm('Continue? Archived data can be exported later, but restoring into the live app is not automatic.')) return;
+
+            const snapshot = {
+                className,
+                archivedAt: new Date().toISOString(),
+                archivedBy: appMeta.deviceName,
+                students: classStudents.map(s => ({ id: s.id, name: s.name, class: s.class, balance: s.balance })),
+                transactions: classTransactions.map(t => ({
+                    id: t.id,
+                    studentId: t.studentId,
+                    studentName: t.studentName,
+                    className: t.className,
+                    amount: t.amount,
+                    reason: t.reason,
+                    date: t.date
+                }))
+            };
+
+            let cloudArchiveId = null;
+            const { data: inserted, error: insertError } = await supabaseClient
+                .from('class_archives')
+                .insert([{
+                    class_name: className,
+                    student_count: classStudents.length,
+                    transaction_count: classTransactions.length,
+                    snapshot
+                }])
+                .select('id')
+                .single();
+
+            if (insertError) {
+                if (insertError.code === 'PGRST205' || (insertError.message || '').includes('class_archives')) {
+                    if (!confirm('Cloud archive table is not set up yet.\n\nSave archive on this device only and still remove the class from active data?')) return;
+                } else {
+                    return alert('Could not save archive: ' + formatSupabaseError(insertError));
+                }
+            } else {
+                cloudArchiveId = inserted.id;
+            }
+
+            saveArchiveToLocalStorage(snapshot, cloudArchiveId);
+
+            if (studentIds.length) {
+                const { error: txError } = await supabaseClient.from('transactions').delete().in('student_id', studentIds);
+                if (txError) return alert('Archive saved, but transactions could not be cleared: ' + txError.message);
+
+                const { error: studentError } = await supabaseClient.from('students').delete().in('id', studentIds);
+                if (studentError) return alert('Archive saved, but students could not be cleared: ' + studentError.message);
+            }
+
+            const { error: classError } = await supabaseClient.from('classes').delete().eq('name', className);
+            if (classError) return alert('Archive saved, but class could not be removed: ' + classError.message);
+
+            await loadFromSupabase();
+            touchData();
+            saveData();
+            hideClassDetail();
+            await loadArchivedClassesList();
+            alert('Class archived successfully.');
+        }
         function refreshClassDetailIfVisible() {
             if (!selectedClassName) return;
             const panel = document.getElementById('class-detail-panel');
             if (!panel || panel.style.display === 'none') return;
-            const classStudents = students.filter(s => s.class === selectedClassName).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-            const meta = document.getElementById('class-detail-meta');
-            const list = document.getElementById('class-students-list');
-            if (meta) meta.textContent = classStudents.length + ' student(s) — tap a student to adjust balance, print QR, or view history';
-            if (!list) return;
-            if (!classStudents.length) {
-                list.innerHTML = '<div class="empty-state">No students in this class yet. Add students from the Students tab.</div>';
-            } else {
-                list.innerHTML = classStudents.map(s => {
-                    const safeId = s.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                    return `<div class="student-card" onclick="openStudentDetailModal('${safeId}')"><div class="student-avatar">${escapeHtml(s.name.charAt(0))}</div><div><h4>${escapeHtml(s.name)}</h4><p>${escapeHtml(s.id)}</p></div><div class="balance-badge">${s.balance}</div></div>`;
-                }).join('');
-            }
+            updateClassDetailPanel(selectedClassName);
         }
         async function addClass() { 
             let n = document.getElementById('new-class-name').value.trim(); 
@@ -954,7 +1128,7 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
             if (id === 'balances') loadBalancesView();
             if (id === 'leaderboard') loadLeaderboardView();
             if (id === 'history') loadHistory();
-            if (id === 'classes') { loadClasses(); if (selectedClassName) refreshClassDetailIfVisible(); }
+            if (id === 'classes') { loadClasses(); if (selectedClassName) refreshClassDetailIfVisible(); loadArchivedClassesList(); }
             if (id === 'security') document.getElementById('current-key').textContent = securityKey.substring(0, 8) + '...' + securityKey.substring(securityKey.length - 8);
             if (id === 'sync') updateSyncStatus();
         }
@@ -1745,6 +1919,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await loadFromSupabase();
     subscribeToRealtime();
+    loadArchivedClassesList();
 
     updatePresets();
     updateSyncStatus();
