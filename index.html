@@ -85,20 +85,35 @@
         .cloud-status-cached { background: #95a5a6; color: white; }
         .cloud-load-warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 12px 16px; border-radius: 12px; margin-bottom: 20px; font-size: 14px; display: none; }
         @media (max-width: 768px) { .container { padding: 10px; } .card { padding: 16px; } .grid-2 { grid-template-columns: 1fr; } }
+        body.student-check-mode .teacher-chrome { display: none !important; }
+        body.student-check-mode .screen { display: none !important; }
+        body.student-check-mode #student-check.screen.active { display: block !important; }
+        body.student-check-mode .container { max-width: 520px; }
+        .student-check-intro { line-height: 1.55; color: #444; }
+        .student-check-steps { list-style: none; margin: 16px 0; padding: 0; }
+        .student-check-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid #eee; }
+        .student-check-steps li:last-child { border-bottom: none; }
+        .step-num { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: #667eea; color: white; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+        .student-check-callout { background: #e8f4fd; border: 1px solid #90caf9; color: #1565c0; padding: 14px 16px; border-radius: 12px; margin: 16px 0; font-size: 14px; }
+        .student-check-callout-warn { background: #fff8e1; border-color: #ffe082; color: #6d4c00; }
+        .student-check-balance-hero { text-align: center; padding: 24px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; color: white; margin-bottom: 16px; }
+        .student-check-balance-hero .amount { font-size: 48px; font-weight: 800; line-height: 1.1; }
+        .student-check-balance-hero .label { opacity: 0.9; font-size: 14px; margin-top: 6px; }
+        .student-check-tx-date { font-size: 12px; color: #888; margin-top: 2px; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo">💰 Classroom Economy</div>
-            <div class="header-status">
+            <div class="logo" id="app-logo">💰 Classroom Economy</div>
+            <div class="header-status teacher-chrome">
                 <span id="cloud-status-badge" class="cloud-status-badge cloud-status-cached">Offline / using cached data</span>
                 <div class="security-badge">🔒 SECURE</div>
             </div>
         </div>
-        <div id="cloud-load-warning" class="cloud-load-warning" role="alert"></div>
-        <div class="nav-tabs">
+        <div id="cloud-load-warning" class="cloud-load-warning teacher-chrome" role="alert"></div>
+        <div class="nav-tabs teacher-chrome">
             <button class="nav-tab active" onclick="showScreen('dashboard', this)">📊 Dashboard</button>
             <button class="nav-tab" onclick="showScreen('batch', this)">⚡ Batch</button>
             <button class="nav-tab" onclick="showScreen('quick', this)">💳 Quick</button>
@@ -109,6 +124,46 @@
             <button class="nav-tab" onclick="showScreen('security', this)">🔒 Security</button>
             <button class="nav-tab" onclick="showScreen('history', this)">📜 History</button>
             <button class="nav-tab" onclick="showScreen('sync', this)">☁️ Sync</button>
+        </div>
+        <div id="student-check" class="screen">
+            <div id="student-check-landing" class="card">
+                <div class="card-title">💰 Check your balance</div>
+                <div class="student-check-intro">
+                    <p><strong>Welcome!</strong> You scanned a <strong>Global Perspectives Classroom Economy</strong> poster. This page can help you check your balance and transaction history anytime.</p>
+                </div>
+                <div class="student-check-callout">
+                    <strong>What this poster QR does</strong><br>
+                    It opens this balance-check page on your device — it does <em>not</em> show your balance by itself. You need your <strong>personal student QR code</strong> (the small card Mr. Rafa gave you) for the next step.
+                </div>
+                <p style="font-weight: 600; margin-bottom: 8px;">How to check your balance</p>
+                <ol class="student-check-steps">
+                    <li><span class="step-num">1</span><span>You scanned the school poster — you're already here ✓</span></li>
+                    <li><span class="step-num">2</span><span>Find your <strong>personal QR code</strong> — if you lost it or you don't have one yet, ask your teacher.</span></li>
+                    <li><span class="step-num">3</span><span>Tap <strong>Scan my card</strong> below and point your camera at <em>your</em> card — not the poster</span></li>
+                    <li><span class="step-num">4</span><span>Your balance and full history (date, reason, amount) will appear on this screen</span></li>
+                </ol>
+                <div class="student-check-callout student-check-callout-warn">
+                    <strong>Don't have your card yet?</strong><br>
+                    Ask your teacher for your official Classroom Economy card. You cannot check a balance until you have that personal QR code. This poster only brings you to this help page.
+                </div>
+                <button class="btn" type="button" onclick="startStudentCheckScan()">📷 Scan my card</button>
+                <div class="form-group" style="margin-top: 16px; margin-bottom: 8px;">
+                    <label>Or enter your student ID</label>
+                    <input type="text" id="student-check-id-input" placeholder="e.g. Y8E101" autocomplete="off">
+                </div>
+                <button class="btn btn-secondary" type="button" onclick="studentCheckByManualId()">Look up by ID</button>
+            </div>
+            <div id="student-check-scan-area" class="card" style="display: none;">
+                <div class="card-title">📷 Scan your personal card</div>
+                <p class="muted-text" style="margin-bottom: 12px;">Hold your <strong>personal</strong> QR card inside the frame — not the classroom poster.</p>
+                <div class="scanner-container">
+                    <div id="student-check-qr-reader"></div>
+                    <div class="scanner-overlay"><div class="scanner-line"></div></div>
+                </div>
+                <button class="btn btn-danger" type="button" onclick="stopStudentCheckScan()">⏹️ Cancel</button>
+            </div>
+            <div id="student-check-result" class="card" style="display: none;"></div>
+            <div id="student-check-error" class="fraud-warning" style="display: none;" role="alert"></div>
         </div>
         <div id="dashboard" class="screen active">
             <div class="grid-2">
@@ -261,6 +316,14 @@
                     <div class="grid-2">
                         <button class="btn btn-secondary" type="button" onclick="printBatchQRCards()">🖨️ Print QR Cards</button>
                         <button class="btn btn-secondary" type="button" onclick="downloadBatchQRCardsHTML()">📥 Download HTML</button>
+                    </div>
+                </div>
+                <div class="card" style="margin-top: 20px; padding: 16px; background: #f8f9fa;">
+                    <div class="card-title" style="font-size: 16px; margin-bottom: 12px;">📋 Classroom balance-check poster</div>
+                    <p class="muted-text" style="margin-bottom: 12px;">Print this poster for hallways and classrooms. Students scan it to open the balance-check page, then scan their personal card. Does not replace student QR cards.</p>
+                    <div class="grid-2">
+                        <button class="btn btn-secondary" type="button" onclick="printClassroomCheckPoster()">🖨️ Print poster</button>
+                        <button class="btn btn-secondary" type="button" onclick="downloadClassroomCheckPosterHTML()">📥 Download HTML</button>
                     </div>
                 </div>
                 <div id="student-list" style="margin-top: 20px;"></div>
@@ -859,6 +922,183 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         function generateSignature(id) { let s = 0, d = id + securityKey; for (let i = 0; i < d.length; i++) { s = ((s << 5) - s) + d.charCodeAt(i); s = s & s; } return Math.abs(s).toString(16).toUpperCase().padStart(8, '0'); }
         function verifyQR(qr) { try { let p = qr.split('|'); if (p.length !== 2) return { valid: false }; return { valid: generateSignature(p[0]) === p[1], studentId: p[0] }; } catch (e) { return { valid: false }; } }
         function secureQR(id) { return id + '|' + generateSignature(id); }
+
+        function isStudentCheckMode() {
+            const params = new URLSearchParams(window.location.search);
+            return params.has('check') || params.get('mode') === 'check';
+        }
+        function getStudentCheckUrl() {
+            const url = new URL(window.location.href);
+            url.search = '?check=1';
+            url.hash = '';
+            return url.toString();
+        }
+        function parseStudentIdFromQR(raw) {
+            const text = String(raw || '').trim();
+            if (!text) return '';
+            if (text.includes('|')) return text.split('|')[0].trim();
+            try {
+                const asUrl = new URL(text);
+                const fromQuery = asUrl.searchParams.get('student') || asUrl.searchParams.get('id');
+                if (fromQuery) return fromQuery.trim();
+            } catch (e) { /* not a URL */ }
+            return text.trim();
+        }
+        async function fetchStudentCheckData(studentId) {
+            const id = String(studentId || '').trim();
+            if (!id) throw new Error('Enter a student ID or scan your personal card.');
+            const [studentRes, txRes] = await Promise.all([
+                supabaseClient.from('students').select('id, name, class_name').eq('id', id).maybeSingle(),
+                supabaseClient.from('transactions').select('id, student_id, amount, reason, created_at').eq('student_id', id).order('created_at', { ascending: false })
+            ]);
+            if (studentRes.error) throw new Error(studentRes.error.message);
+            if (txRes.error) throw new Error(txRes.error.message);
+            if (!studentRes.data) throw new Error('Student not found. If you do not have a card yet, ask your teacher for your official Classroom Economy card.');
+            const txs = txRes.data || [];
+            const balance = txs.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+            return {
+                student: {
+                    id: studentRes.data.id,
+                    name: studentRes.data.name,
+                    class: studentRes.data.class_name,
+                    balance
+                },
+                transactions: txs.map(t => ({
+                    id: t.id,
+                    amount: Number(t.amount || 0),
+                    reason: t.reason || '',
+                    date: t.created_at
+                }))
+            };
+        }
+        function showStudentCheckError(message) {
+            const el = document.getElementById('student-check-error');
+            if (!el) return;
+            if (message) {
+                el.textContent = message;
+                el.style.display = 'block';
+                el.classList.add('active');
+            } else {
+                el.textContent = '';
+                el.style.display = 'none';
+                el.classList.remove('active');
+            }
+        }
+        function showStudentCheckPanels(show) {
+            const landing = document.getElementById('student-check-landing');
+            const scan = document.getElementById('student-check-scan-area');
+            const result = document.getElementById('student-check-result');
+            if (landing) landing.style.display = show.landing ? 'block' : 'none';
+            if (scan) scan.style.display = show.scan ? 'block' : 'none';
+            if (result) result.style.display = show.result ? 'block' : 'none';
+        }
+        function showStudentCheckLanding() {
+            stopScanning();
+            showStudentCheckError('');
+            showStudentCheckPanels({ landing: true, scan: false, result: false });
+        }
+        function renderStudentCheckResultHTML(data) {
+            const s = data.student;
+            const txs = data.transactions;
+            const txHtml = txs.length
+                ? txs.map(t => {
+                    const sign = t.amount > 0 ? '+' : '';
+                    const cls = t.amount > 0 ? 'positive' : 'negative';
+                    const when = t.date ? new Date(t.date).toLocaleString() : '';
+                    return '<div class="transaction-item"><div><div style="font-weight:600">' + escapeHtml(t.reason || 'Transaction') + '</div><div class="student-check-tx-date">' + escapeHtml(when) + '</div></div><span class="' + cls + '" style="font-size:18px;font-weight:700">' + sign + t.amount + '</span></div>';
+                }).join('')
+                : '<p style="color:#999;padding:12px 0">No transactions yet.</p>';
+            return '<div class="student-card"><div class="student-avatar">' + escapeHtml(s.name.charAt(0)) + '</div><div><h4>' + escapeHtml(s.name) + '</h4><p class="muted-text">' + escapeHtml(s.id) + ' • ' + escapeHtml(s.class) + '</p></div></div><div class="student-check-balance-hero"><div class="amount">' + s.balance + '</div><div class="label">coins</div></div><h4 style="margin-bottom:8px">Transaction history</h4>' + txHtml + '<button class="btn" type="button" onclick="refreshStudentCheckResult(\'' + s.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">🔄 Refresh</button><button class="btn btn-secondary" type="button" onclick="showStudentCheckLanding()">📷 Scan another card</button>';
+        }
+        async function loadAndShowStudentCheck(studentId) {
+            showStudentCheckError('');
+            try {
+                const data = await fetchStudentCheckData(studentId);
+                const resultEl = document.getElementById('student-check-result');
+                if (resultEl) resultEl.innerHTML = renderStudentCheckResultHTML(data);
+                showStudentCheckPanels({ landing: false, scan: false, result: true });
+                resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (err) {
+                showStudentCheckError(err.message || 'Could not load balance.');
+                showStudentCheckPanels({ landing: true, scan: false, result: false });
+            }
+        }
+        async function refreshStudentCheckResult(studentId) {
+            showStudentCheckError('');
+            try {
+                const data = await fetchStudentCheckData(studentId);
+                const resultEl = document.getElementById('student-check-result');
+                if (resultEl) resultEl.innerHTML = renderStudentCheckResultHTML(data);
+            } catch (err) {
+                showStudentCheckError(err.message || 'Could not refresh.');
+            }
+        }
+        function startStudentCheckScan() {
+            showStudentCheckError('');
+            showStudentCheckPanels({ landing: false, scan: true, result: false });
+            startScanner('student-check-qr-reader', onStudentCheckScan);
+        }
+        function stopStudentCheckScan() {
+            stopScanning();
+            showStudentCheckLanding();
+        }
+        async function onStudentCheckScan(qr) {
+            stopScanning();
+            const id = parseStudentIdFromQR(qr);
+            if (!id) {
+                showStudentCheckError('Could not read that QR code. Scan your personal card, not the classroom poster.');
+                showStudentCheckPanels({ landing: true, scan: false, result: false });
+                return;
+            }
+            await loadAndShowStudentCheck(id);
+        }
+        async function studentCheckByManualId() {
+            const input = document.getElementById('student-check-id-input');
+            const id = parseStudentIdFromQR(input ? input.value : '');
+            if (!id) {
+                showStudentCheckError('Enter your student ID (e.g. Y8E101) or ask your teacher if you do not have a card yet.');
+                return;
+            }
+            await loadAndShowStudentCheck(id);
+        }
+        async function initStudentCheckMode() {
+            document.body.classList.add('student-check-mode');
+            const logo = document.getElementById('app-logo');
+            if (logo) logo.textContent = '💰 Balance Check';
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            const screen = document.getElementById('student-check');
+            if (screen) screen.classList.add('active');
+            showStudentCheckLanding();
+        }
+        function buildClassroomCheckPosterHTML() {
+            const checkUrl = getStudentCheckUrl();
+            const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(checkUrl);
+            return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Global Perspectives Classroom Economy — Balance Check</title><style>@page { size: A4; margin: 12mm; } * { box-sizing: border-box; } body { margin: 0; font-family: Arial, sans-serif; color: #333; } .poster { max-width: 180mm; margin: 0 auto; padding: 8mm; border: 3px solid #333; border-radius: 12px; } .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; text-align: center; padding: 16px; border-radius: 8px; font-size: 22px; font-weight: bold; margin-bottom: 16px; } h2 { font-size: 18px; margin: 16px 0 8px; } p, li { font-size: 14px; line-height: 1.5; } ol { padding-left: 20px; } .qr-wrap { text-align: center; margin: 20px 0; } .qr-wrap img { border: 4px solid #eee; border-radius: 8px; } .callout { background: #fff8e1; border: 2px solid #ffe082; padding: 12px 16px; border-radius: 8px; margin-top: 16px; font-size: 13px; } .url { font-size: 11px; color: #666; text-align: center; margin-top: 8px; word-break: break-all; }</style></head><body><div class="poster"><div class="header">💰 Global Perspectives Classroom Economy — Check your balance</div><div class="qr-wrap"><img src="' + qrUrl + '" alt="Balance check QR code" width="280" height="280"><p><strong>Scan this poster with your device camera</strong></p></div><h2>What this poster QR does</h2><p>It opens the balance-check page on your device — it does <strong>not</strong> show your balance by itself. You need your <strong>personal student QR code</strong> (the small card Mr. Rafa gave you) for the next step.</p><h2>How to check your balance</h2><ol><li>Scan this school poster — you will see instructions on your device</li><li>Find your <strong>personal QR code</strong> — if you lost it or you do not have one yet, ask your teacher</li><li>On that page, tap <strong>Scan my card</strong> and scan <em>your</em> personal code — not this poster</li><li>View your balance and full transaction history</li></ol><div class="callout"><strong>Don\'t have your card yet?</strong> Ask your teacher for your official Classroom Economy card. You cannot check a balance until you have that personal QR code. This poster only brings you to the help page.</div><div class="url">' + escapeHtml(checkUrl) + '</div></div></body></html>';
+        }
+        function openClassroomCheckPosterWindow(html) {
+            const w = window.open('', '_blank');
+            if (!w) {
+                alert('Pop-up blocked. Allow pop-ups to print the poster.');
+                return;
+            }
+            w.document.write(html);
+            w.document.close();
+            w.focus();
+            setTimeout(() => { try { w.print(); } catch (e) { /* user can print manually */ } }, 500);
+        }
+        function printClassroomCheckPoster() {
+            openClassroomCheckPosterWindow(buildClassroomCheckPosterHTML());
+        }
+        function downloadClassroomCheckPosterHTML() {
+            const html = buildClassroomCheckPosterHTML();
+            const blob = new Blob([html], { type: 'text/html' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'classroom-balance-check-poster-' + new Date().toISOString().slice(0, 10) + '.html';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+
         function loadClasses(skipClassDetailRefresh) {
             let opts = '<option value="">Select Class</option>' + classes.map(c => `<option value="${c}">${c}</option>`).join('');
             document.getElementById('batch-class').innerHTML = opts;
@@ -1905,6 +2145,11 @@ function logSync(msg) {
 
 document.addEventListener('DOMContentLoaded', async () => { 
     preloadSounds();
+
+    if (isStudentCheckMode()) {
+        await initStudentCheckMode();
+        return;
+    }
 
     const unlockOnce = () => {
         unlockSounds();
